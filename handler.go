@@ -40,6 +40,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 
 	recordAttrs := record.NumAttrs()
 
+	// If there are no attributes, just log the message with the level
 	fields := make(map[string]any, recordAttrs)
 	record.Attrs(func(a slog.Attr) bool {
 		if a.Key == "duration" {
