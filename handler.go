@@ -13,37 +13,34 @@ import (
 type prettyHandler struct {
 	slog.Handler
 	logger *log.Logger
+	config Config
 }
+
 type prettyHandlerOptions struct {
 	SlogOpts slog.HandlerOptions
+	Config   Config
 }
-
-type LogLevel int
-
-const (
-	Debug LogLevel = iota
-	Error
-	Info
-	Warn
-)
 
 func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) error {
 	var recordLevel = record.Level.String()
 
-	switch record.Level {
-	case slog.LevelDebug:
-		recordLevel = FormatString(recordLevel, Purple, false)
-	case slog.LevelInfo:
-		recordLevel = FormatString(recordLevel, Blue, false)
-	case slog.LevelWarn:
-		recordLevel = FormatString(recordLevel, Yellow, false)
-	case slog.LevelError:
-		recordLevel = FormatString(recordLevel, Red, false)
+	// Use config.EnableColor to conditionally apply colors
+	if handler.config.EnableColor {
+		switch record.Level {
+		case slog.LevelDebug:
+			recordLevel = FormatString(recordLevel, Purple, false)
+		case slog.LevelInfo:
+			recordLevel = FormatString(recordLevel, Blue, false)
+		case slog.LevelWarn:
+			recordLevel = FormatString(recordLevel, Yellow, false)
+		case slog.LevelError:
+			recordLevel = FormatString(recordLevel, Red, false)
+		}
 	}
 
 	recordAttrs := record.NumAttrs()
 
-	fields := make(map[string]interface{}, recordAttrs)
+	fields := make(map[string]any, recordAttrs)
 	record.Attrs(func(a slog.Attr) bool {
 		if a.Key == "duration" {
 			if duration, ok := a.Value.Any().(time.Duration); ok {
@@ -54,27 +51,30 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 		} else {
 			fields[a.Key] = a.Value.Any()
 		}
-
 		return true
 	})
 
-	byte, err := json.MarshalIndent(fields, "", "  ")
+	jsonData, err := json.MarshalIndent(fields, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	timeStr := record.Time.Format("2006-01-02 15:04:05")
+	// Use config.TimeFormat
+	timeStr := record.Time.Format(handler.config.TimeFormat)
 
 	if record.Message == "" {
 		if recordAttrs > 0 {
-			handler.logger.Println(timeStr, recordLevel, string(byte))
+			handler.logger.Println(timeStr, recordLevel, string(jsonData))
 		} else {
 			handler.logger.Println(timeStr, recordLevel)
 		}
 	} else {
-		msg := FormatString(record.Message, Cyan, false)
+		msg := record.Message
+		if handler.config.EnableColor {
+			msg = FormatString(record.Message, Cyan, false)
+		}
 		if recordAttrs > 0 {
-			handler.logger.Println(timeStr, recordLevel, msg, string(byte))
+			handler.logger.Println(timeStr, recordLevel, msg, string(jsonData))
 		} else {
 			handler.logger.Println(timeStr, recordLevel, msg)
 		}
@@ -83,14 +83,11 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 	return nil
 }
 
-func newPrettyHandler(
-	out io.Writer,
-	opts prettyHandlerOptions,
-) *prettyHandler {
+func newPrettyHandler(out io.Writer, opts prettyHandlerOptions) *prettyHandler {
 	h := &prettyHandler{
 		Handler: slog.NewJSONHandler(out, &opts.SlogOpts),
 		logger:  log.New(out, "", 0),
+		config:  opts.Config,
 	}
-
 	return h
 }
