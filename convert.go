@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"reflect"
+	"strings"
 )
 
 // Helper functions to convert different integer types to int64
@@ -81,8 +82,10 @@ func handleStruct(key string, value any) slog.Attr {
 		// Use json tag if available, otherwise use field name
 		fieldName := field.Name
 		if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
-			if commaIdx := len(jsonTag); commaIdx > 0 {
+			if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
 				fieldName = jsonTag[:commaIdx]
+			} else {
+				fieldName = jsonTag
 			}
 		}
 

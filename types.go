@@ -3,6 +3,7 @@ package logger
 import (
 	"io"
 	"log/slog"
+	"net/http"
 )
 
 type LogLevel int
@@ -20,6 +21,13 @@ type Config struct {
 	Level       slog.Level
 	EnableColor bool
 	TimeFormat  string
+}
+
+// wrappedWriter is used to capture the status code of HTTP responses
+// This is used in the HTTP handler to log the status code of responses
+type wrappedWriter struct {
+	http.ResponseWriter
+	statusCode int
 }
 
 // Internal unexported types

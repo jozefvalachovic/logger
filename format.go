@@ -1,6 +1,9 @@
 package logger
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+)
 
 // formatString is now unexported (internal use only)
 func formatString(text string, c color, bold bool) string {
@@ -29,4 +32,12 @@ func formatString(text string, c color, bold bool) string {
 	}
 
 	return fmt.Sprintf("%s%s%s", colorCode, text, reset)
+}
+
+// getFullPath constructs the full path including query parameters
+func getFullPath(u *url.URL) string {
+	if u.RawQuery == "" {
+		return u.Path
+	}
+	return fmt.Sprintf("%s?%s", u.Path, u.RawQuery)
 }
