@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// All types and functions are now unexported
 type prettyHandler struct {
 	slog.Handler
 	logger *log.Logger
@@ -28,19 +29,18 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 	if handler.config.EnableColor {
 		switch record.Level {
 		case slog.LevelDebug:
-			recordLevel = FormatString(recordLevel, Purple, false)
+			recordLevel = formatString(recordLevel, purple, false)
 		case slog.LevelInfo:
-			recordLevel = FormatString(recordLevel, Blue, false)
+			recordLevel = formatString(recordLevel, blue, false)
 		case slog.LevelWarn:
-			recordLevel = FormatString(recordLevel, Yellow, false)
+			recordLevel = formatString(recordLevel, yellow, false)
 		case slog.LevelError:
-			recordLevel = FormatString(recordLevel, Red, false)
+			recordLevel = formatString(recordLevel, red, false)
 		}
 	}
 
 	recordAttrs := record.NumAttrs()
 
-	// If there are no attributes, just log the message with the level
 	fields := make(map[string]any, recordAttrs)
 	record.Attrs(func(a slog.Attr) bool {
 		if a.Key == "duration" {
@@ -72,7 +72,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 	} else {
 		msg := record.Message
 		if handler.config.EnableColor {
-			msg = FormatString(record.Message, Cyan, false)
+			msg = formatString(record.Message, cyan, false)
 		}
 		if recordAttrs > 0 {
 			handler.logger.Println(timeStr, recordLevel, msg, string(jsonData))

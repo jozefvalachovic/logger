@@ -2,19 +2,8 @@ package logger
 
 import "fmt"
 
-type Color int
-
-const (
-	Blue Color = iota
-	Cyan
-	Green
-	Purple
-	Red
-	Yellow
-)
-
-// Helper function to colorize strings
-func FormatString(text string, color Color, bold bool) string {
+// formatString is now unexported (internal use only)
+func formatString(text string, c color, bold bool) string {
 	var colorCode string
 	if bold {
 		colorCode = "\033[1m"
@@ -22,18 +11,18 @@ func FormatString(text string, color Color, bold bool) string {
 
 	reset := "\033[0m"
 
-	switch color {
-	case Blue:
+	switch c {
+	case blue:
 		colorCode += "\033[34m"
-	case Cyan:
+	case cyan:
 		colorCode += "\033[36m"
-	case Green:
+	case green:
 		colorCode += "\033[032m"
-	case Purple:
+	case purple:
 		colorCode += "\033[35m"
-	case Red:
+	case red:
 		colorCode += "\033[31m"
-	case Yellow:
+	case yellow:
 		colorCode += "\033[33m"
 	default:
 		colorCode += reset
