@@ -92,6 +92,7 @@ func LogHTTPMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
 	return func(conn net.Conn) {
 		start := time.Now()
+
 		remoteAddr := conn.RemoteAddr().String()
 		LogTrace("TCP Connection Started", "remote", remoteAddr)
 
