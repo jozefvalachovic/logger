@@ -93,7 +93,7 @@ func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
 	return func(conn net.Conn) {
 		start := time.Now()
 		remoteAddr := conn.RemoteAddr().String()
-		LogInfo("TCP Connection Started", "remote", remoteAddr)
+		LogTrace("TCP Connection Started", "remote", remoteAddr)
 
 		defer func() {
 			if err := recover(); err != nil {
@@ -103,7 +103,7 @@ func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
 				)
 			}
 			duration := time.Since(start).String()
-			LogInfo("TCP Connection Ended", "remote", remoteAddr, "duration", duration)
+			LogTrace("TCP Connection Ended", "remote", remoteAddr, "duration", duration)
 		}()
 
 		next(conn)
