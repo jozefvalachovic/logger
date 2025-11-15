@@ -55,6 +55,21 @@ func toFloat64(v any) float64 {
 	}
 }
 
+// Converts a body to key-value pairs for logInternal
+func bodyToKeyValues(key string, body []byte) []any {
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err == nil {
+		// Valid JSON: flatten to key-value pairs
+		keyValues := make([]any, 0, len(obj)*2)
+		for k, v := range obj {
+			keyValues = append(keyValues, k, v)
+		}
+		return keyValues
+	}
+	// Not JSON: return as [key, string(body)]
+	return []any{key, string(body)}
+}
+
 // handleStruct converts struct to JSON-like representation
 func handleStruct(key string, value any) slog.Attr {
 	// Try JSON marshaling first (respects json tags)

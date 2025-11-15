@@ -1,19 +1,26 @@
 package logger
 
 import (
-	"fmt"
+	"bytes"
+	"io"
 	"log"
 	"net/http"
 	"time"
 )
 
-// Forward WriteHeader as before
+// wrappedWriter is used to capture the status code of HTTP responses
+type wrappedWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+// WriteHeader captures the status code for logging
 func (w *wrappedWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 	w.statusCode = statusCode
 }
 
-// Forward Flush to the underlying ResponseWriter if it supports http.Flusher
+// Flush ensures that the underlying ResponseWriter's Flush method is called if it exists
 func (w *wrappedWriter) Flush() {
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
@@ -23,7 +30,8 @@ func (w *wrappedWriter) Flush() {
 // Optional: ensure at compile time that wrappedWriter implements http.Flusher
 var _ http.Flusher = (*wrappedWriter)(nil)
 
-func LogMiddleware(next http.Handler) http.Handler {
+// LogMiddleware is an HTTP middleware that logs incoming requests and their details
+func LogMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -37,7 +45,8 @@ func LogMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			if err := recover(); err != nil {
 				LogError("HTTP Panic recovered",
-					"error", err,
+					"__error", err,
+					"body", r.Body,
 					"method", r.Method,
 					"path", getFullPath(r.URL),
 				)
@@ -47,27 +56,33 @@ func LogMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
-		var statusCode string
-		// Colorize the status code based on the first letter
-		switch wrapped.statusCode / 100 {
-		case 2:
-			statusCode = formatString(fmt.Sprintf("%d", wrapped.statusCode), green, false)
-		case 3:
-			statusCode = formatString(fmt.Sprintf("%d", wrapped.statusCode), blue, false)
-		case 4, 5:
-			statusCode = formatString(fmt.Sprintf("%d", wrapped.statusCode), red, false)
-		default:
-			statusCode = fmt.Sprintf("%d", wrapped.statusCode)
-		}
-
+		statusCode, _ := formatStatusCode(wrapped.statusCode)
 		// Build the full URL with query parameters
 		fullPath := getFullPath(r.URL)
 		endPoint := formatString(fullPath, cyan, false)
-
 		// Calculate the duration of the request
 		duration := time.Since(start).String()
 
 		// Log the request
 		log.Printf("%s %s %s %s", statusCode, r.Method, endPoint, duration)
+		// If status code is 4xx or 5xx, log the request body (for detailed error audit)
+		if logBodyOnErrors && wrapped.statusCode >= 400 && wrapped.statusCode <= 599 {
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				LogError("Failed to read HTTP request body for error logging", "__error", err)
+			} else {
+				keyValues := []any{
+					"__method", r.Method,
+					"__path", getFullPath(r.URL),
+					"__status", wrapped.statusCode,
+				}
+				// Restore the body for potential further use
+				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				bodyKeyValues := bodyToKeyValues("body", bodyBytes)
+				keyValues = append(keyValues, bodyKeyValues...)
+
+				LogError("Failed Request", keyValues...)
+			}
+		}
 	})
 }

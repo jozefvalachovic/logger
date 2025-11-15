@@ -10,32 +10,66 @@ import (
 	"time"
 )
 
-// All types and functions are now unexported
+// prettyHandler is a custom slog.Handler that formats log records in a human-readable way
 type prettyHandler struct {
 	slog.Handler
 	logger *log.Logger
 	config Config
 }
 
+// prettyHandlerOptions holds configuration options for the prettyHandler
 type prettyHandlerOptions struct {
 	SlogOpts slog.HandlerOptions
 	Config   Config
 }
 
+const (
+	LevelDebug  = slog.LevelDebug
+	LevelInfo   = slog.LevelInfo
+	LevelNotice = slog.Level(2)
+	LevelTrace  = slog.Level(-8)
+	LevelWarn   = slog.LevelWarn
+	LevelError  = slog.LevelError
+)
+
+// Handle formats and outputs the log record
 func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) error {
 	var recordLevel = record.Level.String()
 
 	// Use config.EnableColor to conditionally apply colors
 	if handler.config.EnableColor {
 		switch record.Level {
-		case slog.LevelDebug:
-			recordLevel = formatString(recordLevel, purple, false)
-		case slog.LevelInfo:
-			recordLevel = formatString(recordLevel, blue, false)
-		case slog.LevelWarn:
-			recordLevel = formatString(recordLevel, yellow, false)
-		case slog.LevelError:
-			recordLevel = formatString(recordLevel, red, false)
+		case LevelDebug:
+			recordLevel = formatString("DEBUG", purple, false)
+		case LevelInfo:
+			recordLevel = formatString("INFO", blue, false)
+		case LevelNotice:
+			recordLevel = formatString("NOTICE", green, false)
+		case LevelTrace:
+			recordLevel = formatString("TRACE", gray, false)
+		case LevelWarn:
+			recordLevel = formatString("WARN", yellow, false)
+		case LevelError:
+			recordLevel = formatString("ERROR", red, false)
+		default:
+			recordLevel = formatString(record.Level.String(), gray, false)
+		}
+	} else {
+		switch record.Level {
+		case LevelDebug:
+			recordLevel = "DEBUG"
+		case LevelInfo:
+			recordLevel = "INFO"
+		case LevelNotice:
+			recordLevel = "NOTICE"
+		case LevelTrace:
+			recordLevel = "TRACE"
+		case LevelWarn:
+			recordLevel = "WARN"
+		case LevelError:
+			recordLevel = "ERROR"
+		default:
+			recordLevel = record.Level.String()
 		}
 	}
 
@@ -84,6 +118,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 	return nil
 }
 
+// newPrettyHandler creates a new instance of prettyHandler with the given output and options
 func newPrettyHandler(out io.Writer, opts prettyHandlerOptions) *prettyHandler {
 	h := &prettyHandler{
 		Handler: slog.NewJSONHandler(out, &opts.SlogOpts),
