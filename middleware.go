@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 )
@@ -30,8 +31,8 @@ func (w *wrappedWriter) Flush() {
 // Optional: ensure at compile time that wrappedWriter implements http.Flusher
 var _ http.Flusher = (*wrappedWriter)(nil)
 
-// LogMiddleware is an HTTP middleware that logs incoming requests and their details
-func LogMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
+// LogHTTPMiddleware is an HTTP middleware that logs incoming requests and their details
+func LogHTTPMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -85,4 +86,26 @@ func LogMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 			}
 		}
 	})
+}
+
+// LogTCPMiddleware logs when a TCP connection is started and ended, and recovers from panics
+func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
+	return func(conn net.Conn) {
+		start := time.Now()
+		remoteAddr := conn.RemoteAddr().String()
+		LogInfo("TCP Connection Started", "remote", remoteAddr)
+
+		defer func() {
+			if err := recover(); err != nil {
+				LogError("TCP Panic recovered",
+					"__error", err,
+					"remote", remoteAddr,
+				)
+			}
+			duration := time.Since(start).String()
+			LogInfo("TCP Connection Ended", "remote", remoteAddr, "duration", duration)
+		}()
+
+		next(conn)
+	}
 }

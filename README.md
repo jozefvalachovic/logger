@@ -199,6 +199,46 @@ func main() {
 - Method and status code logging
 - Log request body for error responses (4xx/5xx) when `logBodyOnErrors` is `true`
 
+### TCP Middleware
+
+```go
+package main
+
+import (
+    "net"
+    "github.com/jozefvalachovic/logger/v2"
+)
+
+func main() {
+    // Your actual connection handler
+    handler := func(conn net.Conn) {
+        // Handle the connection
+        conn.Close()
+    }
+
+    // Apply middleware (outermost to innermost)
+    wrappedHandler := LogTCPMiddleware(handler)
+
+    // Pass the wrapped handler to your TCP server
+    server := NewTCPServer(
+        "MyApp",
+        "2.1.0",
+        0, 0,
+        wrappedHandler,
+        nil, // tlsConfig
+    )
+
+    // Start the server
+    server.Start()
+}
+```
+
+**Features:**
+
+- Logs when a TCP connection is started and ended
+- Recovers from panics and logs errors
+- Easy to compose with other middleware
+
 ## Log Levels
 
 - `logger.Debug` — Purple (detailed debugging information)
