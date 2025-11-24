@@ -34,7 +34,7 @@ const (
 
 // Handle formats and outputs the log record
 func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) error {
-	var recordLevel = record.Level.String()
+	var recordLevel string
 
 	// Use config.EnableColor to conditionally apply colors
 	if handler.config.EnableColor {

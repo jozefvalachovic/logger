@@ -100,7 +100,7 @@ func LogHTTPMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 
 			limitedReader := io.LimitReader(r.Body, maxBodySize+1) // Read one extra byte to detect truncation
 			bodyBytes, bodyErr = io.ReadAll(limitedReader)
-			r.Body.Close()
+			_ = r.Body.Close()
 
 			// Check if we hit the limit
 			if int64(len(bodyBytes)) > maxBodySize {

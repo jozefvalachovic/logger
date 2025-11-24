@@ -36,7 +36,7 @@ func TestHTTPMiddleware(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	wrappedHandler := middleware.LogHTTPMiddleware(handler, true)
@@ -64,7 +64,7 @@ func TestHTTPMiddlewareError(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Error"))
+		_, _ = w.Write([]byte("Error"))
 	})
 
 	wrappedHandler := middleware.LogHTTPMiddleware(handler, true)
@@ -243,7 +243,7 @@ func TestTCPMiddleware(t *testing.T) {
 
 	// Create a pipe to simulate a connection
 	server, client := net.Pipe()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	done := make(chan bool)
 	handler := func(conn net.Conn) {
@@ -293,7 +293,7 @@ func TestTCPMiddlewarePanicRecovery(t *testing.T) {
 	})
 
 	server, client := net.Pipe()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	done := make(chan bool)
 	handler := func(conn net.Conn) {

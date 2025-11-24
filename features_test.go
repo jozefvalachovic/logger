@@ -103,7 +103,7 @@ func TestLogRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create rotating writer: %v", err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Write data exceeding MaxSize
 	data := strings.Repeat("X", 120)
@@ -239,12 +239,12 @@ func TestRotatingWriterBackupCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create rotating writer: %v", err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Write multiple times to trigger several rotations
 	for i := 0; i < 5; i++ {
 		data := strings.Repeat("X", 60)
-		writer.Write([]byte(data))
+		_, _ = writer.Write([]byte(data))
 		time.Sleep(10 * time.Millisecond) // Give time for cleanup goroutine
 	}
 
@@ -302,11 +302,11 @@ func TestRotatingWriterCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create rotating writer: %v", err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Write enough to trigger rotation
 	data := strings.Repeat("Y", 60)
-	writer.Write([]byte(data))
+	_, _ = writer.Write([]byte(data))
 
 	// Wait for compression goroutine
 	time.Sleep(200 * time.Millisecond)
@@ -370,7 +370,7 @@ func TestRotatingWriterDefaultConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create rotating writer with nil config: %v", err)
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Write some data
 	data := "test data"

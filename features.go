@@ -98,7 +98,7 @@ func shouldSample(msg string, rate float64, seed int64) bool {
 
 	hash := fnv.New64a()
 	hash.Write([]byte(msg))
-	hash.Write([]byte(fmt.Sprint(seed)))
+	_, _ = fmt.Fprint(hash, seed)
 	hashValue := hash.Sum64()
 
 	return float64(hashValue%10000) < rate*10000
@@ -253,10 +253,8 @@ func (w *RotatingWriter) shouldRotate(writeSize int64) bool {
 
 func (w *RotatingWriter) rotate() error {
 	if w.file != nil {
-		w.file.Close()
-	}
-
-	// Create backup filename
+		_ = w.file.Close()
+	} // Create backup filename
 	backupName := fmt.Sprintf("%s.%s.%d",
 		w.filename,
 		time.Now().Format("20060102-150405"),
@@ -296,7 +294,7 @@ func (w *RotatingWriter) cleanOldBackups() {
 	if len(matches) > w.config.MaxBackups {
 		// Remove oldest files
 		for i := 0; i < len(matches)-w.config.MaxBackups; i++ {
-			os.Remove(matches[i])
+			_ = os.Remove(matches[i])
 		}
 	}
 }
@@ -304,7 +302,7 @@ func (w *RotatingWriter) cleanOldBackups() {
 func compressFile(filename string) {
 	// Simple placeholder - in production, use gzip
 	// For now, just rename with .gz extension as a marker
-	os.Rename(filename, filename+".gz")
+	_ = os.Rename(filename, filename+".gz")
 }
 
 // Close closes the rotating writer

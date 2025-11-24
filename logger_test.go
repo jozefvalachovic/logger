@@ -327,7 +327,7 @@ func TestLoggerInterface(t *testing.T) {
 		TimeFormat:  "15:04:05",
 	})
 
-	var logger Logger = DefaultLogger()
+	logger := DefaultLogger()
 
 	logger.LogInfo("Test via interface", "key", "value")
 
