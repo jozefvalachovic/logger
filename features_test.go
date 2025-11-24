@@ -5,9 +5,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// syncWriter is a thread-safe writer for testing
+type syncWriter struct {
+	mu  sync.Mutex
+	buf *bytes.Buffer
+}
+
+func newSyncWriter() *syncWriter {
+	return &syncWriter{buf: &bytes.Buffer{}}
+}
+
+func (sw *syncWriter) Write(p []byte) (int, error) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	return sw.buf.Write(p)
+}
+
+func (sw *syncWriter) String() string {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	return sw.buf.String()
+}
 
 func TestLogSampling(t *testing.T) {
 	tests := []struct {
@@ -101,9 +124,9 @@ func TestLogRotation(t *testing.T) {
 }
 
 func TestAsyncLogging(t *testing.T) {
-	var buf bytes.Buffer
+	sw := newSyncWriter()
 	SetConfig(Config{
-		Output:       &buf,
+		Output:       sw,
 		Level:        LevelTrace,
 		AsyncMode:    true,
 		BufferSize:   10,
@@ -119,14 +142,14 @@ func TestAsyncLogging(t *testing.T) {
 	// Wait for async processing
 	time.Sleep(200 * time.Millisecond)
 
-	output := buf.String()
+	output := sw.String()
 	if !strings.Contains(output, testMsg) {
 		t.Errorf("Expected log output in async mode, got: %s", output)
 	}
 
 	// Cleanup: disable async mode
 	SetConfig(Config{
-		Output:    &buf,
+		Output:    sw,
 		Level:     LevelTrace,
 		AsyncMode: false,
 	})
@@ -296,9 +319,18 @@ func TestRotatingWriterCompression(t *testing.T) {
 }
 
 func TestAsyncModeChannelFullFallback(t *testing.T) {
-	var buf bytes.Buffer
+	// First ensure we're in sync mode and wait for any previous async goroutines
+	sw := newSyncWriter()
 	SetConfig(Config{
-		Output:       &buf,
+		Output:    sw,
+		Level:     LevelTrace,
+		AsyncMode: false,
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	// Now start async mode with small buffer
+	SetConfig(Config{
+		Output:       sw,
 		Level:        LevelTrace,
 		AsyncMode:    true,
 		BufferSize:   2,               // Very small buffer
@@ -315,18 +347,18 @@ func TestAsyncModeChannelFullFallback(t *testing.T) {
 	// Some messages should still be logged via fallback
 	time.Sleep(200 * time.Millisecond)
 
-	output := buf.String()
+	output := sw.String()
 	if len(output) == 0 {
 		t.Error("Expected some log output even with full channel")
 	}
 
 	// Cleanup
 	SetConfig(Config{
-		Output:    &buf,
+		Output:    sw,
 		Level:     LevelTrace,
 		AsyncMode: false,
 	})
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestRotatingWriterDefaultConfig(t *testing.T) {

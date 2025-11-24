@@ -75,6 +75,7 @@ var (
 	asyncDone    chan bool
 	asyncRunning bool
 	asyncMu      sync.Mutex
+	asyncWg      sync.WaitGroup // Tracks if async goroutine is running
 
 	// Metrics
 	metrics *LogMetrics

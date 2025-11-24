@@ -6,12 +6,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jozefvalachovic/logger/v3"
 	"github.com/jozefvalachovic/logger/v3/middleware"
 )
+
+// syncWriter is a thread-safe writer for testing
+type syncWriter struct {
+	write func([]byte) (int, error)
+}
+
+func (sw *syncWriter) Write(p []byte) (int, error) {
+	return sw.write(p)
+}
 
 // Test HTTP Middleware
 func TestHTTPMiddleware(t *testing.T) {
@@ -212,8 +222,20 @@ func TestPathRedaction(t *testing.T) {
 // Test TCP Middleware
 func TestTCPMiddleware(t *testing.T) {
 	buf := &bytes.Buffer{}
+	var mu sync.Mutex
+	safeWrite := func(p []byte) (n int, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}
+	safeRead := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+
 	logger.SetConfig(logger.Config{
-		Output:      buf,
+		Output:      &syncWriter{write: safeWrite},
 		Level:       logger.LevelTrace,
 		EnableColor: false,
 		TimeFormat:  "15:04:05",
@@ -223,17 +245,20 @@ func TestTCPMiddleware(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
+	done := make(chan bool)
 	handler := func(conn net.Conn) {
 		// Simulate some work
 		time.Sleep(10 * time.Millisecond)
+		done <- true
 	}
 
 	wrappedHandler := middleware.LogTCPMiddleware(handler)
 
 	go wrappedHandler(server)
-	time.Sleep(20 * time.Millisecond)
+	<-done
+	time.Sleep(5 * time.Millisecond) // Give time for deferred cleanup
 
-	output := buf.String()
+	output := safeRead()
 	if !strings.Contains(output, "TCP Connection Started") {
 		t.Error("Should log TCP connection start")
 	}
@@ -248,8 +273,20 @@ func TestTCPMiddleware(t *testing.T) {
 // Test TCP Middleware Panic Recovery
 func TestTCPMiddlewarePanicRecovery(t *testing.T) {
 	buf := &bytes.Buffer{}
+	var mu sync.Mutex
+	safeWrite := func(p []byte) (n int, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}
+	safeRead := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+
 	logger.SetConfig(logger.Config{
-		Output:      buf,
+		Output:      &syncWriter{write: safeWrite},
 		Level:       logger.LevelTrace,
 		EnableColor: false,
 		TimeFormat:  "15:04:05",
@@ -258,16 +295,19 @@ func TestTCPMiddlewarePanicRecovery(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
+	done := make(chan bool)
 	handler := func(conn net.Conn) {
+		defer func() { done <- true }()
 		panic("tcp panic test")
 	}
 
 	wrappedHandler := middleware.LogTCPMiddleware(handler)
 
 	go wrappedHandler(server)
-	time.Sleep(20 * time.Millisecond)
+	<-done
+	time.Sleep(5 * time.Millisecond) // Give time for deferred cleanup
 
-	output := buf.String()
+	output := safeRead()
 	if !strings.Contains(output, "TCP Panic recovered") {
 		t.Error("Should log TCP panic recovery")
 	}

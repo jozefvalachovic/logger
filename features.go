@@ -107,17 +107,30 @@ func shouldSample(msg string, rate float64, seed int64) bool {
 // startAsyncLogger starts the async logging goroutine
 func startAsyncLogger(cfg Config) {
 	asyncMu.Lock()
-	defer asyncMu.Unlock()
 
+	// If already running, stop it first to avoid race conditions
 	if asyncRunning {
-		return
+		// Signal stop and close channels
+		asyncDone <- true
+		close(logChan)
+		asyncRunning = false
+		asyncMu.Unlock()
+
+		// Wait for goroutine to finish
+		asyncWg.Wait()
+
+		asyncMu.Lock()
 	}
 
 	logChan = make(chan *logEntry, cfg.BufferSize)
-	asyncDone = make(chan bool)
+	asyncDone = make(chan bool, 1) // Buffered to prevent blocking
 	asyncRunning = true
+	asyncWg.Add(1)
+
+	asyncMu.Unlock()
 
 	go func() {
+		defer asyncWg.Done()
 		ticker := time.NewTicker(cfg.FlushTimeout)
 		defer ticker.Stop()
 
@@ -146,15 +159,19 @@ func startAsyncLogger(cfg Config) {
 // stopAsyncLogger stops the async logging goroutine
 func stopAsyncLogger() {
 	asyncMu.Lock()
-	defer asyncMu.Unlock()
 
 	if !asyncRunning {
+		asyncMu.Unlock()
 		return
 	}
 
 	asyncDone <- true
 	close(logChan)
 	asyncRunning = false
+	asyncMu.Unlock()
+
+	// Wait for goroutine to finish
+	asyncWg.Wait()
 }
 
 // RotatingWriter wraps an io.Writer with rotation capabilities
