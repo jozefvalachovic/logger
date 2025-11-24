@@ -13,11 +13,15 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🎯 **Universal type support** — All Go primitive and complex types
 - 🚀 **High performance** — Optimized with singleton pattern and efficient memory allocation
 - 🔒 **Production ready** — Robust error handling with graceful degradation
+- 🎲 **Log Sampling** — Reduce log volume by sampling a percentage of messages
+- 🔄 **Log Rotation** — Automatic log file rotation based on size or age
+- ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
+- 📈 **Metrics** — Built-in log metrics collection and reporting
 
 ## Installation
 
 ```bash
-go get github.com/jozefvalachovic/logger/v2
+go get github.com/jozefvalachovic/logger/v3
 ```
 
 ## Quick Start
@@ -27,7 +31,7 @@ go get github.com/jozefvalachovic/logger/v2
 ```go
 package main
 
-import "github.com/jozefvalachovic/logger/v2"
+import "github.com/jozefvalachovic/logger/v3"
 
 func main() {
     logger.LogInfo("Hello, world!", "user", "alice")
@@ -65,7 +69,7 @@ package main
 
 import (
     "net/http"
-    "github.com/jozefvalachovic/logger/v2"
+    "github.com/jozefvalachovic/logger/v3"
 )
 
 func main() {
@@ -86,7 +90,7 @@ func main() {
 ```go
 import (
     "context"
-    "github.com/jozefvalachovic/logger/v2"
+    "github.com/jozefvalachovic/logger/v3"
 )
 
 func handleRequest(ctx context.Context) {
@@ -114,6 +118,130 @@ config := logger.GetConfig()
 
 - **RedactKeys**: List of keys whose values will be masked in all log output (case-insensitive).
 - **RedactMask**: String used to replace the value of any redacted key.
+
+## Advanced Features (v3.0.0+)
+
+### Log Sampling
+
+Reduce log volume by logging only a percentage of messages. Useful for high-traffic applications where you need to sample logs without losing observability.
+
+```go
+logger.SetConfig(logger.Config{
+    Output:     os.Stdout,
+    SampleRate: 0.1,  // Log only 10% of messages
+    SampleSeed: 42,   // Optional: deterministic sampling with seed
+})
+
+// Only 10% of these messages will be logged
+for i := 0; i < 1000; i++ {
+    logger.LogInfo("High volume event", "id", i)
+}
+```
+
+- **SampleRate**: Float between 0.0 and 1.0 (default: 1.0 = log everything)
+- **SampleSeed**: Optional seed for deterministic sampling
+
+### Log Rotation
+
+Automatically rotate log files based on size or age, with optional compression and backup retention.
+
+```go
+// Create a rotating writer
+rotatingWriter, err := logger.NewRotatingWriter("app.log", &logger.RotationConfig{
+    MaxSize:    100 << 20,          // 100MB
+    MaxAge:     24 * time.Hour,     // 24 hours
+    MaxBackups: 7,                  // Keep 7 old files
+    Compress:   true,               // Compress rotated files
+})
+if err != nil {
+    panic(err)
+}
+defer rotatingWriter.Close()
+
+// Use the rotating writer
+logger.SetConfig(logger.Config{
+    Output: rotatingWriter,
+})
+
+logger.LogInfo("This will be written to a rotating log file")
+```
+
+- **MaxSize**: Maximum file size before rotation (in bytes)
+- **MaxAge**: Maximum age before rotation
+- **MaxBackups**: Number of old files to keep (0 = keep all)
+- **Compress**: Whether to compress rotated files
+
+### Async Logging
+
+Enable non-blocking log writes for high-throughput applications. Logs are queued and written asynchronously.
+
+```go
+logger.SetConfig(logger.Config{
+    Output:       os.Stdout,
+    AsyncMode:    true,
+    BufferSize:   1000,                    // Queue size
+    FlushTimeout: 500 * time.Millisecond, // Flush interval
+})
+
+// These log calls return immediately without blocking
+for i := 0; i < 10000; i++ {
+    logger.LogInfo("High throughput message", "id", i)
+}
+```
+
+- **AsyncMode**: Enable async logging (default: false)
+- **BufferSize**: Channel buffer size (default: 1000)
+- **FlushTimeout**: How often to flush buffered logs (default: 1s)
+
+**Note**: When the buffer is full, logs automatically fall back to synchronous writes to prevent data loss.
+
+### Metrics Collection
+
+Track logging statistics including total logs, logs by level, and error rates.
+
+```go
+logger.SetConfig(logger.Config{
+    Output:        os.Stdout,
+    EnableMetrics: true,
+    MetricsPrefix: "myapp", // Optional prefix for metric names
+})
+
+// Log some messages
+logger.LogInfo("Info message")
+logger.LogWarn("Warning message")
+logger.LogError("Error message")
+
+// Get metrics
+metrics := logger.GetMetrics()
+fmt.Printf("Total logs: %v\n", metrics["total_logs"])
+fmt.Printf("Info logs: %v\n", metrics["logs_info"])
+fmt.Printf("Error logs: %v\n", metrics["logs_error"])
+fmt.Printf("Error rate: %v\n", metrics["error_rate"])
+```
+
+- **EnableMetrics**: Enable metrics collection (default: false)
+- **MetricsPrefix**: Prefix for metric names (default: "logger")
+
+Available metrics:
+
+- `total_logs`: Total number of logs
+- `logs_<level>`: Count per log level (trace, debug, info, notice, warn, error)
+- `error_rate`: Errors per second
+
+### Combining Features
+
+You can combine multiple advanced features:
+
+```go
+logger.SetConfig(logger.Config{
+    Output:        rotatingWriter,
+    SampleRate:    0.5,              // Sample 50% of logs
+    AsyncMode:     true,             // Non-blocking writes
+    EnableMetrics: true,             // Track statistics
+    BufferSize:    2000,
+    FlushTimeout:  time.Second,
+})
+```
 
 ### Example
 
@@ -172,7 +300,7 @@ package main
 
 import (
     "net/http"
-    "github.com/jozefvalachovic/logger/v2"
+    "github.com/jozefvalachovic/logger/v3"
 )
 
 func main() {
@@ -206,7 +334,7 @@ package main
 
 import (
     "net"
-    "github.com/jozefvalachovic/logger/v2"
+    "github.com/jozefvalachovic/logger/v3"
 )
 
 func main() {
@@ -222,7 +350,7 @@ func main() {
     // Pass the wrapped handler to your TCP server
     server := NewTCPServer(
         "MyApp",
-        "2.1.0",
+        "1.0.0",
         0, 0,
         wrappedHandler,
         nil, // tlsConfig

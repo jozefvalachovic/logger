@@ -55,7 +55,12 @@ func toFloat64(v any) float64 {
 	}
 }
 
-// Converts a body to key-value pairs for logInternal
+// BodyToKeyValues converts a body to key-value pairs for logInternal (exported for middleware)
+func BodyToKeyValues(key string, body []byte) []any {
+	return bodyToKeyValues(key, body)
+}
+
+// bodyToKeyValues converts a body to key-value pairs for logInternal (internal)
 func bodyToKeyValues(key string, body []byte) []any {
 	var obj map[string]any
 	if err := json.Unmarshal(body, &obj); err == nil {

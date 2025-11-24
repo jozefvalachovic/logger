@@ -9,16 +9,32 @@ import (
 type color int
 
 const (
-	blue color = iota
-	cyan
-	green
-	purple
-	red
-	yellow
-	gray
+	Blue color = iota
+	Cyan
+	Green
+	Purple
+	Red
+	Yellow
+	Gray
 )
 
-// formatString applies ANSI color codes to the given text
+// Keep lowercase aliases for internal use
+const (
+	blue   = Blue
+	cyan   = Cyan
+	green  = Green
+	purple = Purple
+	red    = Red
+	yellow = Yellow
+	gray   = Gray
+)
+
+// FormatString applies ANSI color codes to the given text
+func FormatString(text string, c color, bold bool) string {
+	return formatString(text, c, bold)
+}
+
+// formatString applies ANSI color codes to the given text (internal)
 func formatString(text string, c color, bold bool) string {
 	var colorCode string
 	if bold {
@@ -93,4 +109,14 @@ func redactValueIfNeeded(key string, value any, cfg Config) any {
 		return cfg.RedactMask
 	}
 	return value
+}
+
+// FormatStatusCode returns the formatted status code and the appropriate log level (exported for middleware)
+func FormatStatusCode(statusCode int) (string, LogLevel) {
+	return formatStatusCode(statusCode)
+}
+
+// GetFullPath builds the full URL path with query parameters (exported for middleware)
+func GetFullPath(u *url.URL) string {
+	return getFullPath(u)
 }
