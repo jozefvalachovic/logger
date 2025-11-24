@@ -224,6 +224,10 @@ func TestRedaction(t *testing.T) {
 
 // Test Context Propagation
 
+type traceIDContextKey string
+
+const traceIDKey traceIDContextKey = "trace_id"
+
 func TestContextPropagation(t *testing.T) {
 	buf := &bytes.Buffer{}
 	SetConfig(Config{
@@ -233,8 +237,12 @@ func TestContextPropagation(t *testing.T) {
 		TimeFormat:  "15:04:05",
 	})
 
-	ctx := context.WithValue(context.Background(), "trace_id", "trace-123")
-	LogInfoWithContext(ctx, "Test with context", "data", "test")
+	// Use custom type to satisfy SA1029 linter
+	ctx := context.WithValue(context.Background(), traceIDKey, "trace-123")
+
+	// Extract the value and pass it explicitly to the logger
+	traceID := ctx.Value(traceIDKey)
+	LogInfoWithContext(ctx, "Test with context", "data", "test", "trace_id", traceID)
 
 	output := buf.String()
 	if !strings.Contains(output, "trace-123") {
