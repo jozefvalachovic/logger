@@ -205,6 +205,8 @@ func logInternalSync(level LogLevel, message string, keyValues ...any) {
 		defaultLogger.Warn(message, anyAttrs...)
 	case Error:
 		defaultLogger.Error(message, anyAttrs...)
+	case Audit:
+		defaultLogger.Log(context.Background(), LevelAudit, message, anyAttrs...)
 	}
 }
 
@@ -223,6 +225,8 @@ func slogLevelFromLogLevel(level LogLevel) slog.Level {
 		return slog.LevelWarn
 	case Error:
 		return slog.LevelError
+	case Audit:
+		return LevelAudit
 	default:
 		return slog.LevelInfo
 	}

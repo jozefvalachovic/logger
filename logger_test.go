@@ -73,6 +73,10 @@ func TestLogError(t *testing.T) {
 	LogError("Test Error", "data", "error")
 }
 
+func TestLogAudit(t *testing.T) {
+	LogAudit("user", "admin", "key", "login", "secret", "success")
+}
+
 type traceIDKeyType struct{}
 
 func TestLogInfoWithContext(t *testing.T) {

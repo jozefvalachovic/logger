@@ -16,17 +16,21 @@ const (
 	Red
 	Yellow
 	Gray
+	Magenta
+	BrightCyan
 )
 
 // Keep lowercase aliases for internal use
 const (
-	blue   = Blue
-	cyan   = Cyan
-	green  = Green
-	purple = Purple
-	red    = Red
-	yellow = Yellow
-	gray   = Gray
+	blue       = Blue
+	cyan       = Cyan
+	green      = Green
+	purple     = Purple
+	red        = Red
+	yellow     = Yellow
+	gray       = Gray
+	magenta    = Magenta
+	brightCyan = BrightCyan
 )
 
 // FormatString applies ANSI color codes to the given text
@@ -58,6 +62,10 @@ func formatString(text string, c color, bold bool) string {
 		colorCode += "\033[33m"
 	case gray:
 		colorCode += "\033[90m"
+	case magenta:
+		colorCode += "\033[95m" // Bright magenta
+	case brightCyan:
+		colorCode += "\033[96m" // Bright cyan
 	default:
 		colorCode += colorReset
 	}

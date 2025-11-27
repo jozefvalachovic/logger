@@ -4,8 +4,9 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 
 ## Features
 
-- 🌈 **Colorized log levels** — Debug, Info, Warn, Error with automatic color coding
+- 🌈 **Colorized log levels** — Trace, Debug, Info, Notice, Warn, Error, Audit with automatic color coding
 - 📊 **Structured logging** — Key-value pairs with JSON-like output
+- 🔐 **Audit logging** — Dedicated audit log level for security and compliance events
 - 🏗️ **Complex data structures** — Structs, arrays, maps, nested objects with JSON tag support
 - 🌐 **HTTP middleware** — Clean request logging with panic recovery and colorized status codes
 - 🔄 **Context support** — Distributed tracing with context-aware logging
@@ -31,10 +32,24 @@ go get github.com/jozefvalachovic/logger/v3
 ```go
 package main
 
-import "github.com/jozefvalachovic/logger/v3"
+import (
+    "time"
+    "github.com/jozefvalachovic/logger/v3"
+)
 
 func main() {
+    // Regular log messages
     logger.LogInfo("Hello, world!", "user", "alice")
+    logger.LogError("Something failed", "error", "timeout")
+
+    // Audit logs - no message, just structured data
+    logger.LogAudit(
+        "action", "user_login",
+        "user_id", "123",
+        "ip_address", "192.168.1.1",
+        "timestamp", time.Now().Unix(),
+        "success", true,
+    )
 }
 ```
 
@@ -70,6 +85,7 @@ package main
 import (
     "net/http"
     "github.com/jozefvalachovic/logger/v3"
+    "github.com/jozefvalachovic/logger/v3/middleware"
 )
 
 func main() {
@@ -77,7 +93,10 @@ func main() {
     mux.HandleFunc("/api/test", func(w http.ResponseWriter, r *http.Request) {
         w.Write([]byte(`{"result":"ok"}`))
     })
-    loggedMux := logger.LogMiddleware(mux)
+
+    // Use middleware package for HTTP logging
+    // Second parameter: log request body on errors (4xx/5xx)
+    loggedMux := middleware.LogHTTPMiddleware(mux, true)
     http.ListenAndServe(":8080", loggedMux)
 }
 
@@ -97,6 +116,37 @@ func handleRequest(ctx context.Context) {
     ctx = context.WithValue(ctx, "trace_id", "abc123def456")
     logger.LogInfoWithContext(ctx, "Processing request", "step", 1)
 }
+```
+
+## Log Levels
+
+The logger supports the following log levels with distinct colors:
+
+- `logger.Trace` — Gray (very detailed tracing)
+- `logger.Debug` — Purple (detailed debugging information)
+- `logger.Info` — Blue (general information)
+- `logger.Notice` — Green (normal but significant events)
+- `logger.Warn` — Yellow (warning conditions)
+- `logger.Error` — Red (error conditions)
+- `logger.Audit` — Bold Bright Cyan (security and compliance audit events)
+
+**Audit Logging**: The `LogAudit` function is special - it only accepts key-value pairs and logs without a message, making it ideal for structured security audit trails:
+
+```go
+logger.LogAudit(
+    "action", "password_reset",
+    "user_id", "456",
+    "performed_by", "admin",
+    "timestamp", time.Now().Unix(),
+)
+
+// Output:
+// 19:54:32 AUDIT {
+//   "action": "password_reset",
+//   "performed_by": "admin",
+//   "timestamp": 1732740872,
+//   "user_id": "456"
+// }
 ```
 
 ## Configuration
@@ -119,7 +169,7 @@ config := logger.GetConfig()
 - **RedactKeys**: List of keys whose values will be masked in all log output (case-insensitive).
 - **RedactMask**: String used to replace the value of any redacted key.
 
-## Advanced Features (v3.0.0+)
+## Advanced Features (v3.1.0+)
 
 ### Log Sampling
 
@@ -500,6 +550,21 @@ Run benchmarks:
 go test -bench=. -benchmem
 ```
 
+## Examples
+
+The `examples/` directory contains complete, runnable examples:
+
+- **`examples/basic/`** — All log levels demonstration
+- **`examples/audit/`** — Security audit logging examples
+- **`examples/http-middleware/`** — HTTP request logging middleware
+- **`examples/advanced/`** — Sampling, async logging, metrics, and context
+
+Run any example:
+
+```bash
+cd examples/basic && go run main.go
+```
+
 ## Migration from v1
 
 - The API remains compatible with v1 for basic logging.
@@ -507,4 +572,4 @@ go test -bench=. -benchmem
 
 ---
 
-**For more examples and documentation, see the source code and tests.**
+**For more examples and documentation, see the examples directory and tests.**

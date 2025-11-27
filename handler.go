@@ -30,6 +30,7 @@ const (
 	LevelTrace  = slog.Level(-8)
 	LevelWarn   = slog.LevelWarn
 	LevelError  = slog.LevelError
+	LevelAudit  = slog.Level(10) // Higher than Error for security audit logs
 )
 
 // Handle formats and outputs the log record
@@ -51,6 +52,8 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 			recordLevel = formatString("WARN", yellow, false)
 		case LevelError:
 			recordLevel = formatString("ERROR", red, false)
+		case LevelAudit:
+			recordLevel = formatString("AUDIT", brightCyan, false) // Bold bright cyan for audit
 		default:
 			recordLevel = formatString(record.Level.String(), gray, false)
 		}
@@ -68,6 +71,8 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 			recordLevel = "WARN"
 		case LevelError:
 			recordLevel = "ERROR"
+		case LevelAudit:
+			recordLevel = "AUDIT"
 		default:
 			recordLevel = record.Level.String()
 		}

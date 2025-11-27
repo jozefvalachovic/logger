@@ -17,6 +17,7 @@ const (
 	Notice
 	Warn
 	Error
+	Audit // Security audit logs
 )
 
 // Logger interface for dependency injection
@@ -28,6 +29,7 @@ type Logger interface {
 	LogTrace(message string, keyValues ...any)
 	LogWarn(message string, keyValues ...any)
 	LogError(message string, keyValues ...any)
+	LogAudit(keyValues ...any)
 	LogInfoWithContext(ctx context.Context, message string, keyValues ...any)
 	LogHttpRequest(r *http.Request)
 }
@@ -70,6 +72,10 @@ func (l *defaultLoggerImpl) LogWarn(message string, keyValues ...any) {
 
 func (l *defaultLoggerImpl) LogError(message string, keyValues ...any) {
 	logInternal(Error, message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogAudit(keyValues ...any) {
+	logInternal(Audit, "", keyValues...)
 }
 
 func (l *defaultLoggerImpl) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
@@ -199,6 +205,12 @@ func LogWarn(message string, keyValues ...any) {
 // LogError logs an error message with optional key-value pairs
 func LogError(message string, keyValues ...any) {
 	logInternal(Error, message, keyValues...)
+}
+
+// LogAudit logs a security audit event with only key-value pairs
+// No message is logged, only the structured data
+func LogAudit(keyValues ...any) {
+	logInternal(Audit, "", keyValues...)
 }
 
 // Contextual Log function wrappers

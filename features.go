@@ -82,6 +82,8 @@ func levelToString(level LogLevel) string {
 		return "warn"
 	case Error:
 		return "error"
+	case Audit:
+		return "audit"
 	default:
 		return "unknown"
 	}
