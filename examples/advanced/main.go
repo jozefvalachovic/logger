@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jozefvalachovic/logger/v3"
+	"github.com/jozefvalachovic/logger/v4"
 )
 
 // contextKey is a custom type for context keys to avoid collisions

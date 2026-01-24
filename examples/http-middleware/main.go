@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/jozefvalachovic/logger/v3"
-	"github.com/jozefvalachovic/logger/v3/middleware"
+	"github.com/jozefvalachovic/logger/v4"
+	"github.com/jozefvalachovic/logger/v4/middleware"
 )
 
 func main() {
@@ -23,9 +23,12 @@ func main() {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	})
 
-	// Apply logging middleware
-	// Second parameter (true) enables logging request/response body on errors
-	loggedMux := middleware.LogHTTPMiddleware(mux, true)
+	// Apply logging middleware with options
+	// Using functional options pattern for configuration
+	loggedMux := middleware.LogHTTPMiddleware(mux,
+		middleware.WithLogBodyOnErrors(true),
+		middleware.WithRequestID(true),
+	)
 
 	// Start server
 	logger.LogInfo("Starting HTTP server", "port", 8080)

@@ -19,10 +19,21 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
 - 📈 **Metrics** — Built-in log metrics collection and reporting
 
+### New in v4: Enterprise Audit
+
+- 🛡️ **Tamper Detection** — SHA-256/512 hash chain for audit log integrity
+- 💾 **Guaranteed Delivery** — Write-ahead log (WAL) ensures no audit events are lost
+- 🔗 **Distributed Tracing** — W3C, B3, and Jaeger trace context propagation
+- 📤 **Multi-Sink Support** — Write to files, webhooks, and custom destinations simultaneously
+- ⏰ **Retention Policies** — Automatic archival, compression, and cleanup
+- 🏢 **Compliance Presets** — SOC2, HIPAA, PCI-DSS, GDPR, and FedRAMP configurations
+- 🔍 **Query & Export API** — Search audit logs and export to JSON, JSONL, or CSV
+- 🚦 **Rate Limiting** — Token bucket rate limiter to protect downstream systems
+
 ## Installation
 
 ```bash
-go get github.com/jozefvalachovic/logger/v3
+go get github.com/jozefvalachovic/logger/v4
 ```
 
 ## Quick Start
@@ -34,7 +45,7 @@ package main
 
 import (
     "time"
-    "github.com/jozefvalachovic/logger/v3"
+    "github.com/jozefvalachovic/logger/v4"
 )
 
 func main() {
@@ -84,8 +95,8 @@ package main
 
 import (
     "net/http"
-    "github.com/jozefvalachovic/logger/v3"
-    "github.com/jozefvalachovic/logger/v3/middleware"
+    "github.com/jozefvalachovic/logger/v4"
+    "github.com/jozefvalachovic/logger/v4/middleware"
 )
 
 func main() {
@@ -94,9 +105,11 @@ func main() {
         w.Write([]byte(`{"result":"ok"}`))
     })
 
-    // Use middleware package for HTTP logging
-    // Second parameter: log request body on errors (4xx/5xx)
-    loggedMux := middleware.LogHTTPMiddleware(mux, true)
+    // Basic usage with functional options
+    loggedMux := middleware.LogHTTPMiddleware(mux,
+        middleware.WithLogBodyOnErrors(true),
+        middleware.WithRequestID(true),
+    )
     http.ListenAndServe(":8080", loggedMux)
 }
 
@@ -109,7 +122,7 @@ func main() {
 ```go
 import (
     "context"
-    "github.com/jozefvalachovic/logger/v3"
+    "github.com/jozefvalachovic/logger/v4"
 )
 
 func handleRequest(ctx context.Context) {
@@ -147,6 +160,218 @@ logger.LogAudit(
 //   "timestamp": 1732740872,
 //   "user_id": "456"
 // }
+```
+
+## Enterprise Audit Logging (v4)
+
+For production systems requiring compliance, tamper detection, and guaranteed delivery, use the enterprise audit package:
+
+### Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/jozefvalachovic/logger/v4"
+    "github.com/jozefvalachovic/logger/v4/audit"
+)
+
+func main() {
+    // Configure enterprise audit
+    logger.SetConfig(logger.Config{
+        Audit: &audit.Config{
+            EnableStructured: true,
+            HashChain: audit.HashChainConfig{
+                Enabled:   true,
+                Algorithm: "sha256",
+            },
+            Service: &audit.ServiceContext{
+                Name:        "my-service",
+                Version:     "1.0.0",
+                Environment: "production",
+            },
+        },
+    })
+
+    // Log structured audit events
+    ctx := context.Background()
+    logger.LogAuditEvent(ctx, audit.AuditEvent{
+        Type:    audit.AuditAuth,
+        Action:  "user_login",
+        Outcome: audit.OutcomeSuccess,
+        Actor: audit.AuditActor{
+            ID:   "user-123",
+            Type: "user",
+            IP:   "192.168.1.100",
+        },
+        Description: "User successfully logged in",
+    })
+}
+```
+
+### Compliance Presets
+
+Apply industry-standard compliance configurations with a single call:
+
+```go
+// SOC2 compliance (1 year retention, hash chain, WAL)
+cfg := audit.DefaultConfig()
+cfg.WithCompliance(audit.ComplianceSOC2)
+cfg.WAL.Path = "/var/log/audit/wal"
+
+// Available presets:
+// - audit.ComplianceSOC2    (1 year retention)
+// - audit.ComplianceHIPAA   (6 year retention, signatures)
+// - audit.CompliancePCIDSS  (1 year retention)
+// - audit.ComplianceGDPR    (90 day retention, auto-delete)
+// - audit.ComplianceFedRAMP (3 year retention, signatures)
+```
+
+### Multi-Sink Support
+
+Write audit logs to multiple destinations:
+
+```go
+import (
+    "github.com/jozefvalachovic/logger/v4/audit"
+    "github.com/jozefvalachovic/logger/v4/audit/sink"
+)
+
+// File sink with rotation
+fileSink, _ := sink.NewFileSink(sink.FileSinkConfig{
+    Path:        "/var/log/audit/audit.jsonl",
+    MaxSize:     100 << 20, // 100MB
+    RotateDaily: true,
+})
+
+// Webhook sink for SIEM integration
+webhookSink := sink.NewWebhookSink(sink.WebhookSinkConfig{
+    Endpoint:   "https://siem.example.com/audit",
+    Headers:    map[string]string{"Authorization": "Bearer token"},
+    MaxRetries: 3,
+    BatchSize:  100,
+})
+
+// Combine sinks
+multiSink := sink.NewMultiSink(fileSink, webhookSink)
+
+cfg := audit.DefaultConfig()
+cfg.Sinks = []audit.Sink{multiSink}
+```
+
+### Query & Export API
+
+Search and export audit logs:
+
+```go
+import (
+    "github.com/jozefvalachovic/logger/v4/audit"
+    "github.com/jozefvalachovic/logger/v4/audit/store"
+)
+
+// Configure with a store for querying
+memStore := store.NewMemoryStore(store.MemoryStoreConfig{MaxSize: 10000})
+cfg := audit.DefaultConfig()
+cfg.Store = memStore
+
+auditLogger, _ := audit.New(cfg)
+
+// Query audit logs
+query := audit.NewQuery().
+    WithTimeRange(audit.LastDays(7)).
+    WithEventTypes(audit.AuditAuth, audit.AuditAuthz).
+    WithActorIDs("user-123").
+    WithOutcomes(audit.OutcomeFailure).
+    WithLimit(100)
+
+result, _ := auditLogger.Query(query)
+for _, entry := range result.Entries {
+    fmt.Printf("%s: %s by %s\n", entry.Timestamp, entry.Event.Action, entry.Event.Actor.ID)
+}
+
+// Export to CSV
+file, _ := os.Create("audit-export.csv")
+store.Export(file, result.Entries, store.FormatCSV)
+```
+
+### Distributed Tracing
+
+Automatically extract and propagate trace context:
+
+```go
+// Extract trace context from HTTP headers (W3C, B3, or Jaeger)
+cfg := audit.DefaultConfig()
+cfg.Tracing = audit.TracingConfig{
+    Enabled:           true,
+    PropagationFormat: "w3c", // or "b3", "b3-single", "jaeger"
+}
+
+// In your HTTP handler
+func handler(w http.ResponseWriter, r *http.Request) {
+    traceInfo := audit.ExtractTraceContext(cfg.Tracing, r.Header.Get)
+    ctx := audit.WithTraceContext(r.Context(), traceInfo)
+
+    // Audit events automatically include trace_id and span_id
+    logger.LogAuditEvent(ctx, audit.AuditEvent{...})
+}
+```
+
+### Event Types
+
+The audit package provides standard event types for compliance:
+
+| Type                 | Description                                      |
+| -------------------- | ------------------------------------------------ |
+| `AuditAuth`          | Authentication events (login, logout, MFA)       |
+| `AuditAuthz`         | Authorization/permission checks                  |
+| `AuditDataAccess`    | Data read operations                             |
+| `AuditDataModify`    | Data create/update/delete operations             |
+| `AuditConfigChange`  | System configuration changes                     |
+| `AuditAdminAction`   | Administrative actions                           |
+| `AuditSecurityEvent` | Security-related events                          |
+| `AuditUserLifecycle` | User account lifecycle (create, delete, disable) |
+| `AuditAPIAccess`     | API access events                                |
+| `AuditSystem`        | System events                                    |
+| `AuditCustom`        | Custom event types                               |
+
+### Audit Entry Schema
+
+Each audit entry contains:
+
+```json
+{
+  "id": "1737734400000000000-hostname-1-a1b2c3d4",
+  "timestamp": "2026-01-24T12:00:00Z",
+  "event": {
+    "type": "authentication",
+    "action": "user_login",
+    "outcome": "success",
+    "actor": {
+      "id": "user-123",
+      "type": "user",
+      "ip": "192.168.1.100"
+    },
+    "resource": {
+      "id": "app-1",
+      "type": "application"
+    },
+    "description": "User logged in successfully"
+  },
+  "service": {
+    "name": "auth-service",
+    "version": "2.1.0",
+    "environment": "production"
+  },
+  "trace": {
+    "trace_id": "abc123...",
+    "span_id": "def456..."
+  },
+  "hash": "sha256:...",
+  "previous_hash": "sha256:...",
+  "sequence": 42,
+  "schema_version": "1.0"
+}
 ```
 
 ## Configuration
@@ -350,7 +575,10 @@ package main
 
 import (
     "net/http"
-    "github.com/jozefvalachovic/logger/v3"
+    "time"
+
+    "github.com/jozefvalachovic/logger/v4"
+    "github.com/jozefvalachovic/logger/v4/middleware"
 )
 
 func main() {
@@ -358,13 +586,90 @@ func main() {
     mux.HandleFunc("/api/test", func(w http.ResponseWriter, r *http.Request) {
         w.Write([]byte(`{"result":"ok"}`))
     })
-    // Only logs requests (does not log request body for errors)
-    loggedMux := logger.LogMiddleware(mux, false)
-    http.ListenAndServe(":8080", loggedMux)
 
-    // To also log request bodies for 4xx/5xx responses:
-    // loggedMux := logger.LogMiddleware(mux, true)
+    // Full-featured middleware with functional options
+    loggedMux := middleware.LogHTTPMiddleware(mux,
+        middleware.WithLogBodyOnErrors(true),
+        middleware.WithLogResponseBody(true),
+        middleware.WithRequestID(true),
+        middleware.WithRequestIDHeader("X-Correlation-ID"),
+        middleware.WithSkipPaths("/health", "/ready"),
+        middleware.WithSkipPathPrefixes("/metrics"),
+        middleware.WithLogLevel(500, logger.Error),
+        middleware.WithLogLevels(map[int]logger.LogLevel{
+            400: logger.Warn,
+            500: logger.Error,
+        }),
+        middleware.WithAudit(true),
+        middleware.WithAuditMethods("POST", "PUT", "DELETE"),
+        middleware.WithMetrics(true),
+        middleware.WithCustomFields(map[string]any{"service": "api"}),
+        middleware.WithOnRequestStart(func(r *http.Request) {
+            // Pre-request hook
+        }),
+        middleware.WithOnRequestEnd(func(r *http.Request, status int, duration time.Duration) {
+            // Post-request hook
+        }),
+    )
+    http.ListenAndServe(":8080", loggedMux)
 }
+```
+
+#### Middleware Options
+
+| Option                                   | Description                                            |
+| ---------------------------------------- | ------------------------------------------------------ |
+| `WithLogBodyOnErrors(bool)`              | Log request body on 4xx/5xx errors                     |
+| `WithLogResponseBody(bool)`              | Log response body on errors                            |
+| `WithRequestID(bool)`                    | Generate/extract request IDs                           |
+| `WithRequestIDHeader(string)`            | Custom header for request ID (default: `X-Request-ID`) |
+| `WithSkipPaths(...string)`               | Exact paths to exclude from logging                    |
+| `WithSkipPathPrefixes(...string)`        | Path prefixes to exclude from logging                  |
+| `WithLogLevel(int, LogLevel)`            | Custom log level for specific status code              |
+| `WithLogLevels(map[int]LogLevel)`        | Custom log levels for status code ranges               |
+| `WithAudit(bool)`                        | Enable audit event emission                            |
+| `WithAuditMethods(...string)`            | HTTP methods to audit (nil = all)                      |
+| `WithMetrics(bool)`                      | Enable metrics collection                              |
+| `WithMetricsCollector(MetricsCollector)` | Custom metrics collector                               |
+| `WithCustomFields(map[string]any)`       | Add fields to every log entry                          |
+| `WithOnRequestStart(func)`               | Callback before request processing                     |
+| `WithOnRequestEnd(func)`                 | Callback after request processing                      |
+
+#### Request ID Context
+
+Access request ID and timing in your handlers:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    requestID := middleware.GetRequestID(r.Context())
+    startTime := middleware.GetRequestStart(r.Context())
+    // ...
+}
+```
+
+#### Metrics Collection
+
+Use the built-in metrics collector or implement your own:
+
+```go
+// Built-in default collector
+collector := middleware.NewDefaultMetricsCollector()
+
+loggedMux := middleware.LogHTTPMiddleware(mux,
+    middleware.WithMetricsCollector(collector),
+)
+
+// Access metrics
+metrics := collector.GetMetrics()
+fmt.Printf("Total requests: %d\n", collector.GetTotalRequests())
+fmt.Printf("Error rate: %.2f%%\n", collector.GetErrorRate())
+fmt.Printf("Avg duration: %s\n", collector.GetAverageDuration())
+
+// Custom implementation
+type MyCollector struct{}
+func (c *MyCollector) RecordRequest(method, path string, status int, duration time.Duration) {}
+func (c *MyCollector) RecordError(method, path string, status int) {}
+func (c *MyCollector) RecordPanic(method, path string) {}
 ```
 
 **Features:**
@@ -375,7 +680,12 @@ func main() {
 - Full URL path with query parameters
 - Panic recovery with structured error logging
 - Method and status code logging
-- Log request body for error responses (4xx/5xx) when `logBodyOnErrors` is `true`
+- Request/response body logging on errors
+- Request ID generation and propagation
+- Path-based skip rules
+- Audit integration
+- Metrics collection
+- Custom callbacks
 
 ### TCP Middleware
 
@@ -384,7 +694,7 @@ package main
 
 import (
     "net"
-    "github.com/jozefvalachovic/logger/v3"
+    "github.com/jozefvalachovic/logger/v4"
 )
 
 func main() {
@@ -555,7 +865,7 @@ go test -bench=. -benchmem
 The `examples/` directory contains complete, runnable examples:
 
 - **`examples/basic/`** — All log levels demonstration
-- **`examples/audit/`** — Security audit logging examples
+- **`examples/audit/`** — Security audit logging (legacy and enterprise)
 - **`examples/http-middleware/`** — HTTP request logging middleware
 - **`examples/advanced/`** — Sampling, async logging, metrics, and context
 
@@ -563,6 +873,60 @@ Run any example:
 
 ```bash
 cd examples/basic && go run main.go
+cd examples/audit && go run main.go  # Enterprise audit features
+```
+
+## Package Structure
+
+```
+logger/
+├── main.go           # Core logger configuration and types
+├── logger.go         # Logging functions and SetConfig
+├── handler.go        # slog handler implementation
+├── format.go         # Output formatting
+├── convert.go        # Type conversion utilities
+├── features.go       # Sampling, rotation, async, metrics
+├── version.go        # Version information
+├── audit/            # Enterprise audit package
+│   ├── types.go      # Audit event types and schemas
+│   ├── config.go     # Audit configuration
+│   ├── logger.go     # Audit logger implementation
+│   ├── chain.go      # Hash chain for tamper detection
+│   ├── wal.go        # Write-ahead log
+│   ├── trace.go      # Distributed tracing
+│   ├── query.go      # Query API
+│   ├── sink/         # Output sinks (file, webhook, multi)
+│   └── store/        # Storage backends (memory, export)
+└── middleware/       # HTTP/TCP middleware
+    ├── http.go       # Core HTTP middleware
+    ├── options.go    # Functional options pattern
+    ├── metrics.go    # MetricsCollector interface
+    ├── helpers.go    # Internal helpers
+    └── tcp.go        # TCP middleware
+```
+
+## Migration from v3
+
+v4 is fully backward compatible with v3. The new enterprise audit features are opt-in:
+
+```go
+// v3 code continues to work unchanged
+logger.LogAudit("action", "login", "user", "alice")
+
+// v4 adds optional enterprise audit
+logger.SetConfig(logger.Config{
+    Audit: &audit.Config{...}, // Enable enterprise features
+})
+logger.LogAuditEvent(ctx, audit.AuditEvent{...})
+
+// v4 middleware now uses functional options (v3 boolean API still works)
+// v3 style:
+// loggedMux := middleware.LogHTTPMiddleware(mux, true)
+// v4 style:
+loggedMux := middleware.LogHTTPMiddleware(mux,
+    middleware.WithLogBodyOnErrors(true),
+    middleware.WithRequestID(true),
+)
 ```
 
 ## Migration from v1

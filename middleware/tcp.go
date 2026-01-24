@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/jozefvalachovic/logger/v3"
+	"github.com/jozefvalachovic/logger/v4"
 )
 
 // LogTCPMiddleware logs when a TCP connection is started and ended, and recovers from panics

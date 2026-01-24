@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+
+	"github.com/jozefvalachovic/logger/v4/audit"
 )
 
 type LogLevel int
@@ -30,6 +32,7 @@ type Logger interface {
 	LogWarn(message string, keyValues ...any)
 	LogError(message string, keyValues ...any)
 	LogAudit(keyValues ...any)
+	LogAuditEvent(ctx context.Context, event audit.AuditEvent) error
 	LogInfoWithContext(ctx context.Context, message string, keyValues ...any)
 	LogHttpRequest(r *http.Request)
 }
@@ -76,6 +79,10 @@ func (l *defaultLoggerImpl) LogError(message string, keyValues ...any) {
 
 func (l *defaultLoggerImpl) LogAudit(keyValues ...any) {
 	logInternal(Audit, "", keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
+	return LogAuditEvent(ctx, event)
 }
 
 func (l *defaultLoggerImpl) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
@@ -138,6 +145,7 @@ func SetConfig(cfg Config) {
 	// Handle async mode changes
 	configMu.RLock()
 	oldAsync := globalConfig.AsyncMode
+	oldAuditConfig := globalConfig.Audit
 	configMu.RUnlock()
 
 	if cfg.AsyncMode && !oldAsync {
@@ -153,6 +161,29 @@ func SetConfig(cfg Config) {
 		metrics = NewLogMetrics()
 	} else if !cfg.EnableMetrics && metrics != nil {
 		metrics = nil
+	}
+
+	// Handle enterprise audit logger changes
+	if cfg.Audit != nil && oldAuditConfig == nil {
+		// Initialize enterprise audit logger
+		if al, err := audit.New(*cfg.Audit); err != nil {
+			LogError("Failed to initialize enterprise audit logger", "__error", err)
+		} else {
+			auditLogger = al
+		}
+	} else if cfg.Audit == nil && auditLogger != nil {
+		// Close existing audit logger
+		auditLogger.Close()
+		auditLogger = nil
+	} else if cfg.Audit != nil && auditLogger != nil {
+		// Reconfigure: close old and create new
+		auditLogger.Close()
+		if al, err := audit.New(*cfg.Audit); err != nil {
+			LogError("Failed to reinitialize enterprise audit logger", "__error", err)
+			auditLogger = nil
+		} else {
+			auditLogger = al
+		}
 	}
 
 	configMu.Lock()
@@ -209,8 +240,76 @@ func LogError(message string, keyValues ...any) {
 
 // LogAudit logs a security audit event with only key-value pairs
 // No message is logged, only the structured data
+// This is the legacy audit logging function - for enterprise features, use LogAuditEvent
 func LogAudit(keyValues ...any) {
 	logInternal(Audit, "", keyValues...)
+}
+
+// LogAuditEvent logs a structured audit event using the enterprise audit logger
+// If enterprise audit is not configured, falls back to legacy LogAudit behavior
+func LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
+	configMu.RLock()
+	cfg := globalConfig
+	configMu.RUnlock()
+
+	// If enterprise audit is configured, use it
+	if cfg.Audit != nil && auditLogger != nil {
+		return auditLogger.Log(ctx, event)
+	}
+
+	// Fallback to legacy behavior: convert event to key-value pairs
+	keyValues := []any{
+		"event_type", string(event.Type),
+		"action", event.Action,
+		"outcome", string(event.Outcome),
+		"actor_id", event.Actor.ID,
+		"actor_type", event.Actor.Type,
+	}
+
+	if event.Actor.IP != "" {
+		keyValues = append(keyValues, "actor_ip", event.Actor.IP)
+	}
+
+	if event.Resource != nil {
+		keyValues = append(keyValues, "resource_id", event.Resource.ID, "resource_type", event.Resource.Type)
+	}
+
+	if event.Description != "" {
+		keyValues = append(keyValues, "description", event.Description)
+	}
+
+	if event.Reason != "" {
+		keyValues = append(keyValues, "reason", event.Reason)
+	}
+
+	// Add metadata
+	for k, v := range event.Metadata {
+		keyValues = append(keyValues, k, v)
+	}
+
+	logInternal(Audit, "", keyValues...)
+	return nil
+}
+
+// LogAuditEventSync logs a structured audit event synchronously (guaranteed delivery)
+// Only available when enterprise audit is configured
+func LogAuditEventSync(ctx context.Context, event audit.AuditEvent) error {
+	configMu.RLock()
+	cfg := globalConfig
+	configMu.RUnlock()
+
+	if cfg.Audit != nil && auditLogger != nil {
+		return auditLogger.LogSync(ctx, event)
+	}
+
+	// Fallback to regular async logging
+	return LogAuditEvent(ctx, event)
+}
+
+// GetAuditLogger returns the enterprise audit logger instance
+// Returns nil if enterprise audit is not configured
+func GetAuditLogger() *audit.Logger {
+	return auditLogger
 }
 
 // Contextual Log function wrappers

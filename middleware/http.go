@@ -1,169 +1,192 @@
+// Package middleware provides HTTP and TCP logging middleware for the logger package.
 package middleware
 
 import (
 	"bytes"
+	"context"
 	"io"
-	"log"
 	"net/http"
-	"strings"
-	"sync"
+	"runtime/debug"
 	"time"
 
-	"github.com/jozefvalachovic/logger/v3"
+	"github.com/jozefvalachovic/logger/v4"
 )
 
-// wrappedWriter is used to capture the status code of HTTP responses
-type wrappedWriter struct {
-	http.ResponseWriter
-	statusCode int
+func LogHTTPMiddleware(next http.Handler, opts ...HTTPMiddlewareOption) http.Handler {
+	options := DefaultHTTPMiddlewareOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+	return logHTTPMiddlewareWithOptions(next, options)
 }
 
-// WriteHeader captures the status code for logging
-func (w *wrappedWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.WriteHeader(statusCode)
-	w.statusCode = statusCode
-}
+// logHTTPMiddlewareWithOptions is the internal implementation with resolved options
+func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOptions) http.Handler {
+	cfg := logger.GetConfig()
 
-// Flush ensures that the underlying ResponseWriter's Flush method is called if it exists
-func (w *wrappedWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
-// Optional: ensure at compile time that wrappedWriter implements http.Flusher
-var _ http.Flusher = (*wrappedWriter)(nil)
-
-// Pools for memory optimization
-var (
-	wrappedWriterPool = sync.Pool{
-		New: func() interface{} {
-			return &wrappedWriter{statusCode: http.StatusOK}
-		},
-	}
-
-	bufferPool = sync.Pool{
-		New: func() interface{} {
-			return new(bytes.Buffer)
-		},
-	}
-)
-
-// shouldLogBody checks if the content type is appropriate for logging
-func shouldLogBody(contentType string) bool {
-	contentType = strings.ToLower(contentType)
-	// Log only text-based content types
-	allowedTypes := []string{
-		"application/json",
-		"application/xml",
-		"text/",
-		"application/x-www-form-urlencoded",
-	}
-
-	for _, allowed := range allowedTypes {
-		if strings.Contains(contentType, allowed) {
-			return true
-		}
-	}
-	return false
-}
-
-// LogHTTPMiddleware is an HTTP middleware that logs incoming requests and their details
-func LogHTTPMiddleware(next http.Handler, logBodyOnErrors bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		cfg := logger.GetConfig()
 
-		// Check if path should be completely redacted
-		fullPath := logger.GetFullPath(r.URL)
-		if logger.ShouldRedactPath(fullPath, cfg) {
-			// Use logger to write to configured output
-			logger.LogInfo("HTTP Request [REDACTED]", "__method", r.Method, "__path", cfg.RedactMask)
+		// Check if path should be skipped
+		fullPath := r.URL.Path
+		if r.URL.RawQuery != "" {
+			fullPath = r.URL.Path + "?" + r.URL.RawQuery
+		}
+
+		if shouldSkipPath(fullPath, options) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Read and buffer the body before processing (with configurable size limit)
+		// Handle Request ID
+		requestID := ""
+		if options.EnableRequestID {
+			requestID = r.Header.Get(options.RequestIDHeader)
+			if requestID == "" {
+				requestID = generateRequestID()
+			}
+			// Add request ID to response header
+			w.Header().Set(options.RequestIDHeader, requestID)
+			// Add to context
+			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+			ctx = context.WithValue(ctx, RequestStartKey, start)
+			r = r.WithContext(ctx)
+		}
+
+		// Call start callback
+		if options.OnRequestStart != nil {
+			options.OnRequestStart(r)
+		}
+
+		// Read and buffer the body for potential logging
 		var bodyBytes []byte
 		var bodyErr error
-		var truncated bool
-		maxBodySize := cfg.MaxBodySize
-
-		contentType := r.Header.Get("Content-Type")
-		shouldLog := shouldLogBody(contentType)
-
-		if logBodyOnErrors && shouldLog && r.Body != nil {
-			// Get buffer from pool
-			buf := bufferPool.Get().(*bytes.Buffer)
-			buf.Reset()
-			defer bufferPool.Put(buf)
-
-			limitedReader := io.LimitReader(r.Body, maxBodySize+1) // Read one extra byte to detect truncation
-			bodyBytes, bodyErr = io.ReadAll(limitedReader)
-			_ = r.Body.Close()
-
-			// Check if we hit the limit
-			if int64(len(bodyBytes)) > maxBodySize {
-				bodyBytes = bodyBytes[:maxBodySize]
+		truncated := false
+		if r.Body != nil && options.LogBodyOnErrors {
+			bodyBytes, bodyErr = io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize+1))
+			r.Body.Close()
+			if int64(len(bodyBytes)) > cfg.MaxBodySize {
 				truncated = true
+				bodyBytes = bodyBytes[:cfg.MaxBodySize]
 			}
-
-			// Restore the body for the handler
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
-		// Get wrapped writer from pool
+		// Get a wrapped writer from pool
 		wrapped := wrappedWriterPool.Get().(*wrappedWriter)
 		wrapped.ResponseWriter = w
 		wrapped.statusCode = http.StatusOK
-		defer wrappedWriterPool.Put(wrapped)
+		wrapped.captureBody = options.LogResponseBody
+		if options.LogResponseBody {
+			wrapped.responseBody = bufferPool.Get().(*bytes.Buffer)
+			wrapped.responseBody.Reset()
+		}
 
-		// Recover from panics with stack trace
+		// Panic recovery
 		defer func() {
-			if err := recover(); err != nil {
-				stack := logger.GetStackTrace()
-				logger.LogError("HTTP Panic recovered",
-					"__error", err,
-					"method", r.Method,
-					"path", fullPath,
-					"stack", stack,
-				)
+			if rec := recover(); rec != nil {
+				wrapped.statusCode = http.StatusInternalServerError
+				stack := debug.Stack()
+
+				// Record panic in metrics
+				if options.EnableMetrics && options.MetricsCollector != nil {
+					options.MetricsCollector.RecordPanic(r.Method, fullPath)
+				}
+
+				// Check if path should be redacted for logging
+				panicLogPath := fullPath
+				if logger.ShouldRedactPath(fullPath, cfg) {
+					panicLogPath = cfg.RedactMask
+				}
+
+				keyValues := []any{
+					"__method", r.Method,
+					"__path", panicLogPath,
+					"__status", wrapped.statusCode,
+					"panic", rec,
+					"stack", string(stack),
+				}
+				if requestID != "" {
+					keyValues = append(keyValues, "request_id", requestID)
+				}
+				// Add custom fields
+				for k, v := range options.CustomFields {
+					keyValues = append(keyValues, k, v)
+				}
+
+				logger.LogError("HTTP Panic Recovered", keyValues...)
+
+				// Try to write error response if not already written
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			}
 		}()
 
 		next.ServeHTTP(wrapped, r)
 
-		statusCode, _ := logger.FormatStatusCode(wrapped.statusCode)
-		endPoint := logger.FormatString(fullPath, logger.Cyan, false)
-		duration := time.Since(start).String()
+		duration := time.Since(start)
 
-		// Log the request
-		log.Printf("%s %s %s %s", statusCode, r.Method, endPoint, duration)
-
-		// If status code is 4xx or 5xx, log the request body
-		if logBodyOnErrors && wrapped.statusCode >= 400 && wrapped.statusCode <= 599 {
-			if bodyErr != nil {
-				logger.LogError("Failed to read HTTP request body for error logging", "__error", bodyErr)
-			} else if shouldLog {
-				keyValues := []any{
-					"__method", r.Method,
-					"__path", fullPath,
-					"__status", wrapped.statusCode,
-				}
-
-				// Add ellipsis if truncated
-				if truncated {
-					bodyStr := string(bodyBytes) + "..."
-					bodyKeyValues := []any{"body", bodyStr}
-					keyValues = append(keyValues, bodyKeyValues...)
-				} else {
-					bodyKeyValues := logger.BodyToKeyValues("body", bodyBytes)
-					keyValues = append(keyValues, bodyKeyValues...)
-				}
-
-				logger.LogError("Failed Request", keyValues...)
-			}
+		// Record metrics
+		if options.EnableMetrics && options.MetricsCollector != nil {
+			options.MetricsCollector.RecordRequest(r.Method, fullPath, wrapped.statusCode, duration)
 		}
+
+		// Call end callback
+		if options.OnRequestEnd != nil {
+			options.OnRequestEnd(r, wrapped.statusCode, duration)
+		}
+
+		// Emit audit event if enabled
+		if options.EnableAudit && shouldAuditRequest(r.Method, options) {
+			emitAuditEvent(r, wrapped.statusCode, duration, requestID, fullPath)
+		}
+
+		// Determine log level based on status code
+		logLevel := getLogLevelForStatus(wrapped.statusCode, options)
+
+		// Check if path should be redacted
+		logPath := fullPath
+		if logger.ShouldRedactPath(fullPath, cfg) {
+			logPath = cfg.RedactMask
+		}
+
+		// Build key-value pairs
+		keyValues := []any{
+			"__method", r.Method,
+			"__path", logPath,
+			"__status", wrapped.statusCode,
+			"__duration", duration.String(),
+		}
+
+		if requestID != "" {
+			keyValues = append(keyValues, "request_id", requestID)
+		}
+
+		// Add custom fields
+		for k, v := range options.CustomFields {
+			keyValues = append(keyValues, k, v)
+		}
+
+		// Log at the appropriate level
+		switch logLevel {
+		case logger.Error:
+			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
+			logger.LogError("HTTP Request", keyValues...)
+		case logger.Warn:
+			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
+			logger.LogWarn("HTTP Request", keyValues...)
+		case logger.Debug:
+			logger.LogDebug("HTTP Request", keyValues...)
+		default:
+			logger.LogInfo("HTTP Request", keyValues...)
+		}
+
+		// Return pooled objects
+		if wrapped.responseBody != nil {
+			wrapped.responseBody.Reset()
+			bufferPool.Put(wrapped.responseBody)
+			wrapped.responseBody = nil
+		}
+		wrapped.captureBody = false
+		wrappedWriterPool.Put(wrapped)
 	})
 }

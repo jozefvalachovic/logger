@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jozefvalachovic/logger/v4/audit"
 )
 
 type Config struct {
@@ -37,6 +39,9 @@ type Config struct {
 	// Metrics configuration
 	EnableMetrics bool
 	MetricsPrefix string // Prefix for metric names (default: "logger")
+
+	// Enterprise Audit configuration (nil = use legacy LogAudit behavior)
+	Audit *audit.Config
 }
 
 // RotationConfig configures automatic log file rotation
@@ -61,6 +66,11 @@ func (c *Config) Validate() error {
 	if c.MaxBodySize < 0 {
 		return fmt.Errorf("MaxBodySize cannot be negative")
 	}
+	if c.Audit != nil {
+		if err := c.Audit.Validate(); err != nil {
+			return fmt.Errorf("audit config: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -80,6 +90,9 @@ var (
 	// Metrics
 	metrics *LogMetrics
 
+	// Enterprise audit logger (nil when using legacy behavior)
+	auditLogger *audit.Logger
+
 	defaultConfig = Config{
 		Output:        os.Stdout,
 		Level:         LevelTrace,
@@ -97,6 +110,7 @@ var (
 		FlushTimeout:  time.Second,
 		EnableMetrics: false,
 		MetricsPrefix: "logger",
+		Audit:         nil, // Legacy behavior by default
 	}
 )
 
