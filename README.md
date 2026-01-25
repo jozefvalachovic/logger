@@ -931,6 +931,11 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
 )
 ```
 
+### v4.0.3 Changes
+
+- **CI simplified** — Now targets Go 1.25 only with golangci-lint v2.8.0
+- **golangci-lint v2 support** — Upgraded to golangci-lint-action@v8
+
 ### v4.0.1 Changes
 
 - **Improved HTTP/TCP middleware log messages** — Key request details (method, path, status, duration) now appear in the log message for better searchability in GCP Cloud Logging, Grafana, and other log aggregation tools
