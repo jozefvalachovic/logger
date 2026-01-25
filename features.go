@@ -302,9 +302,14 @@ func (w *RotatingWriter) cleanOldBackups() {
 }
 
 func compressFile(filename string) {
-	// Simple placeholder - in production, use gzip
-	// For now, just rename with .gz extension as a marker
-	_ = os.Rename(filename, filename+".gz")
+	// TODO: Implement actual gzip compression
+	// For now, this is a no-op placeholder that marks the file
+	// In production, replace with proper gzip implementation:
+	//   - Read the file
+	//   - Compress with gzip.NewWriter
+	//   - Write to filename + ".gz"
+	//   - Remove original file
+	_ = os.Rename(filename, filename+".bak")
 }
 
 // Close closes the rotating writer

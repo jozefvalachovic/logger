@@ -3,8 +3,8 @@ package logger
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/jozefvalachovic/logger/v4/audit"
@@ -331,7 +331,9 @@ func LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
 		keyValues = append(keyValues, "trace_id", traceID)
 	}
 	logInternal(Info, message, keyValues...)
-} // LogHttpRequest logs details of an HTTP request
+}
+
+// LogHttpRequest logs details of an HTTP request
 func LogHttpRequest(r *http.Request) {
 	logHttpRequestInternal(r)
 }
@@ -344,23 +346,41 @@ func logHttpRequestInternal(r *http.Request) {
 
 	// Check if path should be redacted
 	fullPath := getFullPath(r.URL)
+	logPath := fullPath
 	if shouldRedactPath(fullPath, cfg) {
-		log.Printf("%s %s %s [REDACTED]", "---", r.Method, cfg.RedactMask)
-		return
+		logPath = cfg.RedactMask
 	}
 
-	statusCode, logLevel := formatStatusCode(r.Response.StatusCode)
-	endPoint := formatString(fullPath, cyan, false)
-	userAgent := formatString(r.UserAgent(), purple, false)
-	log.Printf("%s %s %s %s", statusCode, r.Method, endPoint, userAgent)
-
-	// Read and log the body separately to avoid consuming it
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		logInternal(Error, "Failed to read HTTP request body", "__error", err)
-		return
+	// Get status code and determine log level
+	statusCode := 0
+	if r.Response != nil {
+		statusCode = r.Response.StatusCode
 	}
-	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	bodyKeyValues := bodyToKeyValues("body", bodyBytes)
-	logInternal(logLevel, statusCode, bodyKeyValues...)
+	_, logLevel := formatStatusCode(statusCode)
+
+	// Build key-value pairs
+	keyValues := []any{
+		"__method", r.Method,
+		"__path", logPath,
+		"__status", statusCode,
+		"__user_agent", r.UserAgent(),
+	}
+
+	// Read and log the body if present
+	if r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			logInternal(Error, "Failed to read HTTP request body", "__error", err)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		if len(bodyBytes) > 0 {
+			bodyKeyValues := bodyToKeyValues("body", bodyBytes)
+			keyValues = append(keyValues, bodyKeyValues...)
+		}
+	}
+
+	// Log with key details in the message
+	logMsg := fmt.Sprintf("%s %s [%d]", r.Method, logPath, statusCode)
+	logInternal(logLevel, logMsg, keyValues...)
 }

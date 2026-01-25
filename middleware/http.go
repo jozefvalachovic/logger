@@ -4,6 +4,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"runtime/debug"
@@ -114,7 +115,7 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 					keyValues = append(keyValues, k, v)
 				}
 
-				logger.LogError("HTTP Panic Recovered", keyValues...)
+				logger.LogError(fmt.Sprintf("PANIC %s %s [%d]", r.Method, panicLogPath, wrapped.statusCode), keyValues...)
 
 				// Try to write error response if not already written
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -166,18 +167,20 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 			keyValues = append(keyValues, k, v)
 		}
 
-		// Log at the appropriate level
+		// Log at the appropriate level with key details in the message
+		logMsg := fmt.Sprintf("%s %s [%d] %s", r.Method, logPath, wrapped.statusCode, duration)
+
 		switch logLevel {
 		case logger.Error:
 			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
-			logger.LogError("HTTP Request", keyValues...)
+			logger.LogError(logMsg, keyValues...)
 		case logger.Warn:
 			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
-			logger.LogWarn("HTTP Request", keyValues...)
+			logger.LogWarn(logMsg, keyValues...)
 		case logger.Debug:
-			logger.LogDebug("HTTP Request", keyValues...)
+			logger.LogDebug(logMsg, keyValues...)
 		default:
-			logger.LogInfo("HTTP Request", keyValues...)
+			logger.LogInfo(logMsg, keyValues...)
 		}
 
 		// Return pooled objects

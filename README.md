@@ -114,7 +114,7 @@ func main() {
 }
 
 // Output example:
-// 200 GET /api/test test-agent 15.234ms
+// INFO GET /api/test [200] 15.234ms
 ```
 
 ### Context-Aware Logging
@@ -394,7 +394,7 @@ config := logger.GetConfig()
 - **RedactKeys**: List of keys whose values will be masked in all log output (case-insensitive).
 - **RedactMask**: String used to replace the value of any redacted key.
 
-## Advanced Features (v3.1.0+)
+## Advanced Features (v4.0+)
 
 ### Log Sampling
 
@@ -797,10 +797,12 @@ logger.LogInfo("Product created", "product", product)
 ### HTTP Middleware Output
 
 ```
-200 GET /api/test test-agent 15.234ms
-404 GET /api/notfound test-agent 2.456ms
-500 POST /api/error test-agent 123.789ms
+INFO GET /api/test [200] 15.234ms
+WARN GET /api/notfound [404] 2.456ms
+ERROR POST /api/error [500] 123.789ms
 ```
+
+The middleware logs key request details (method, path, status, duration) in the log message for easy searching in log aggregation tools like GCP Cloud Logging and Grafana.
 
 ### Context-Aware Logging
 
@@ -928,6 +930,11 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
     middleware.WithRequestID(true),
 )
 ```
+
+### v4.0.1 Changes
+
+- **Improved HTTP/TCP middleware log messages** — Key request details (method, path, status, duration) now appear in the log message for better searchability in GCP Cloud Logging, Grafana, and other log aggregation tools
+- **Version alignment** — Package version now correctly reflects v4 module path
 
 ## Migration from v1
 

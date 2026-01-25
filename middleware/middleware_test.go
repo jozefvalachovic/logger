@@ -112,7 +112,7 @@ func TestHTTPMiddlewarePanicRecovery(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "HTTP Panic Recovered") {
+	if !strings.Contains(output, "PANIC GET /test [500]") {
 		t.Error("Should log panic recovery")
 	}
 	if !strings.Contains(output, "stack") {
