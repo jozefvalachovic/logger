@@ -88,7 +88,7 @@ func enterpriseAuditExample() {
 		fmt.Printf("Failed to create audit logger: %v\n", err)
 		return
 	}
-	defer auditLogger.Close()
+	defer func() { _ = auditLogger.Close() }()
 
 	// Example 1: User authentication event
 	authEvent := audit.AuditEvent{
@@ -227,7 +227,7 @@ func complianceAuditExample() {
 		fmt.Printf("Failed to create SOC2 audit logger: %v\n", err)
 		return
 	}
-	defer auditLogger.Close()
+	defer func() { _ = auditLogger.Close() }()
 
 	// Log a PCI-DSS relevant event (payment processing)
 	paymentEvent := audit.AuditEvent{
@@ -305,7 +305,7 @@ func integratedExample() {
 	}
 
 	// This will use enterprise audit if configured, or fallback to legacy
-	logger.LogAuditEvent(ctx, event)
+	_ = logger.LogAuditEvent(ctx, event)
 
 	// Legacy API still works
 	logger.LogAudit("event", "simple_audit", "key", "value")
@@ -313,3 +313,6 @@ func integratedExample() {
 	// Regular logging is unaffected
 	logger.LogInfo("This is a regular info log")
 }
+
+// Ensure integratedExample is used (referenced for documentation)
+var _ = integratedExample

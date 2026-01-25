@@ -47,7 +47,7 @@ func NewFileSink(cfg FileSinkConfig) (*FileSink, error) {
 
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("sink: failed to stat file: %w", err)
 	}
 
@@ -129,7 +129,7 @@ func (s *FileSink) Close() error {
 	s.closed = true
 
 	if err := s.writer.Flush(); err != nil {
-		s.file.Close()
+		_ = s.file.Close()
 		return err
 	}
 

@@ -129,7 +129,7 @@ func (s *FileStore) readFile(path string, q audit.Query) ([]audit.AuditEntry, er
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var entries []audit.AuditEntry
 	scanner := bufio.NewScanner(file)
@@ -159,7 +159,7 @@ func (s *FileStore) findInFile(path string, id string) (*audit.AuditEntry, error
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)

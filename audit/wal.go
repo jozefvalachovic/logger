@@ -40,7 +40,7 @@ func NewWAL(cfg WALConfig) (*WAL, error) {
 
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("audit: failed to stat WAL file: %w", err)
 	}
 
@@ -169,7 +169,7 @@ func (w *WAL) Close() error {
 	w.closed = true
 
 	if err := w.writer.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
 		return err
 	}
 
@@ -188,7 +188,7 @@ func (w *WAL) Recover() ([]*AuditEntry, error) {
 		}
 		return nil, fmt.Errorf("audit: failed to open WAL for recovery: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	uncommitted := make(map[string]*AuditEntry)
 	scanner := bufio.NewScanner(file)

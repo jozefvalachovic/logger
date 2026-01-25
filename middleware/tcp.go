@@ -29,7 +29,7 @@ func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
 					"stack", stack,
 				)
 				// Still try to close connection after panic
-				conn.Close()
+				_ = conn.Close()
 				return
 			}
 

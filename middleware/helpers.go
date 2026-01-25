@@ -93,7 +93,7 @@ func shouldLogBody(contentType string) bool {
 // generateRequestID generates a random request ID
 func generateRequestID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
@@ -209,7 +209,7 @@ func emitAuditEvent(r *http.Request, statusCode int, duration time.Duration, req
 		event.Actor.Type = "anonymous"
 	}
 
-	logger.LogAuditEvent(r.Context(), event)
+	_ = logger.LogAuditEvent(r.Context(), event)
 }
 
 // getClientIP extracts the client IP from a request

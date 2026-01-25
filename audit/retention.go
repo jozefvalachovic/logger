@@ -54,12 +54,12 @@ func (r *RetentionManager) Start() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		r.cleanup()
+		_ = r.cleanup()
 
 		for {
 			select {
 			case <-ticker.C:
-				r.cleanup()
+				_ = r.cleanup()
 			case <-r.stopCh:
 				return
 			}
@@ -138,7 +138,7 @@ func (r *RetentionManager) cleanup() error {
 			}
 
 			if r.cfg.DeleteAfterArchive || r.cfg.ArchivePath == "" {
-				os.Remove(path)
+				_ = os.Remove(path)
 			}
 
 			totalSize -= f.Size()
@@ -210,16 +210,16 @@ func (r *RetentionManager) compressFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	gzWriter := gzip.NewWriter(dstFile)
-	defer gzWriter.Close()
+	defer func() { _ = gzWriter.Close() }()
 
 	_, err = io.Copy(gzWriter, srcFile)
 	return err
@@ -230,13 +230,13 @@ func (r *RetentionManager) copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

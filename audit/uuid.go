@@ -25,7 +25,7 @@ func getMachineID() string {
 	}
 
 	b := make([]byte, 4)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%s", hostname[:min(8, len(hostname))], hex.EncodeToString(b))
 }
 
@@ -42,7 +42,7 @@ func generateUUID() string {
 	counter := atomic.AddUint64(&uuidCounter, 1)
 
 	b := make([]byte, 8)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 
 	return fmt.Sprintf("%d-%s-%d-%s",
 		now.UnixNano(),

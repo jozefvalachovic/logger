@@ -65,7 +65,7 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 		truncated := false
 		if r.Body != nil && options.LogBodyOnErrors {
 			bodyBytes, bodyErr = io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize+1))
-			r.Body.Close()
+			_ = r.Body.Close()
 			if int64(len(bodyBytes)) > cfg.MaxBodySize {
 				truncated = true
 				bodyBytes = bodyBytes[:cfg.MaxBodySize]

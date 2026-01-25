@@ -172,7 +172,7 @@ func (w *WebhookSink) send(entries []*audit.AuditEntry) error {
 	if err != nil {
 		return fmt.Errorf("sink: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("sink: webhook returned status %d", resp.StatusCode)
@@ -187,7 +187,7 @@ func (w *WebhookSink) flushLoop() {
 	for {
 		select {
 		case <-w.flushTicker.C:
-			w.Flush()
+			_ = w.Flush()
 		case <-w.stopCh:
 			return
 		}

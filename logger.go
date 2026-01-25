@@ -173,11 +173,11 @@ func SetConfig(cfg Config) {
 		}
 	} else if cfg.Audit == nil && auditLogger != nil {
 		// Close existing audit logger
-		auditLogger.Close()
+		_ = auditLogger.Close()
 		auditLogger = nil
 	} else if cfg.Audit != nil && auditLogger != nil {
 		// Reconfigure: close old and create new
-		auditLogger.Close()
+		_ = auditLogger.Close()
 		if al, err := audit.New(*cfg.Audit); err != nil {
 			LogError("Failed to reinitialize enterprise audit logger", "__error", err)
 			auditLogger = nil

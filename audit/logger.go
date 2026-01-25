@@ -58,13 +58,13 @@ func NewLogger(cfg Config) (*Logger, error) {
 
 		uncommitted, err := wal.Recover()
 		if err != nil {
-			wal.Close()
+			_ = wal.Close()
 			return nil, err
 		}
 
 		for _, entry := range uncommitted {
 			if err := l.writeToSinks(entry); err == nil {
-				wal.Commit(entry.ID)
+				_ = wal.Commit(entry.ID)
 			}
 		}
 	}
@@ -189,7 +189,7 @@ func (l *Logger) Close() error {
 	close(l.stopCh)
 	<-l.doneCh
 
-	l.Flush()
+	_ = l.Flush()
 
 	var errs []error
 
@@ -322,9 +322,9 @@ func (l *Logger) processBuffer() {
 	for {
 		select {
 		case entry := <-l.buffer:
-			l.processEntry(entry)
+			_ = l.processEntry(entry)
 		case <-ticker.C:
-			l.Flush()
+			_ = l.Flush()
 		case <-l.stopCh:
 			return
 		}
