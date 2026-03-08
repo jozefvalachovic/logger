@@ -380,7 +380,7 @@ func MetricsHandler() http.Handler {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 		if metrics == nil {
-			fmt.Fprintln(w, "# No metrics collected (EnableMetrics is false)")
+			_, _ = fmt.Fprintln(w, "# No metrics collected (EnableMetrics is false)")
 			return
 		}
 
@@ -393,25 +393,25 @@ func MetricsHandler() http.Handler {
 			prefix = "logger"
 		}
 
-		fmt.Fprintf(w, "# HELP %s_logs_total Total number of log entries\n", prefix)
-		fmt.Fprintf(w, "# TYPE %s_logs_total counter\n", prefix)
+		_, _ = fmt.Fprintf(w, "# HELP %s_logs_total Total number of log entries\n", prefix)
+		_, _ = fmt.Fprintf(w, "# TYPE %s_logs_total counter\n", prefix)
 		if total, ok := m["total_logs"].(int64); ok {
-			fmt.Fprintf(w, "%s_logs_total %d\n", prefix, total)
+			_, _ = fmt.Fprintf(w, "%s_logs_total %d\n", prefix, total)
 		}
 
-		fmt.Fprintf(w, "# HELP %s_logs_by_level Log entries by level\n", prefix)
-		fmt.Fprintf(w, "# TYPE %s_logs_by_level counter\n", prefix)
+		_, _ = fmt.Fprintf(w, "# HELP %s_logs_by_level Log entries by level\n", prefix)
+		_, _ = fmt.Fprintf(w, "# TYPE %s_logs_by_level counter\n", prefix)
 		for _, level := range []string{"trace", "debug", "info", "notice", "warn", "error", "audit"} {
 			key := "logs_" + level
 			if count, ok := m[key]; ok {
-				fmt.Fprintf(w, "%s_logs_by_level{level=%q} %v\n", prefix, level, count)
+				_, _ = fmt.Fprintf(w, "%s_logs_by_level{level=%q} %v\n", prefix, level, count)
 			}
 		}
 
-		fmt.Fprintf(w, "# HELP %s_error_rate Errors per second\n", prefix)
-		fmt.Fprintf(w, "# TYPE %s_error_rate gauge\n", prefix)
+		_, _ = fmt.Fprintf(w, "# HELP %s_error_rate Errors per second\n", prefix)
+		_, _ = fmt.Fprintf(w, "# TYPE %s_error_rate gauge\n", prefix)
 		if rate, ok := m["error_rate"].(float64); ok {
-			fmt.Fprintf(w, "%s_error_rate %f\n", prefix, rate)
+			_, _ = fmt.Fprintf(w, "%s_error_rate %f\n", prefix, rate)
 		}
 	})
 }

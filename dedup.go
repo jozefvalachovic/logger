@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 )
@@ -58,9 +59,7 @@ func (d *dedupManager) ShouldLog(level LogLevel, msg string) bool {
 func (d *dedupManager) Flush() {
 	d.mu.Lock()
 	expired := make(map[string]*dedupEntry, len(d.entries))
-	for k, v := range d.entries {
-		expired[k] = v
-	}
+	maps.Copy(expired, d.entries)
 	d.entries = make(map[string]*dedupEntry)
 	d.mu.Unlock()
 	for msg, e := range expired {

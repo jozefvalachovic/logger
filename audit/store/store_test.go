@@ -70,9 +70,9 @@ func TestMemoryStoreQuery(t *testing.T) {
 	s := NewMemoryStore(MemoryStoreConfig{MaxSize: 100})
 
 	now := time.Now().UTC()
-	s.Store(makeEntry("e1", audit.AuditAuth, now))
-	s.Store(makeEntry("e2", audit.AuditDataAccess, now.Add(time.Second)))
-	s.Store(makeEntry("e3", audit.AuditAuth, now.Add(2*time.Second)))
+	_ = s.Store(makeEntry("e1", audit.AuditAuth, now))
+	_ = s.Store(makeEntry("e2", audit.AuditDataAccess, now.Add(time.Second)))
+	_ = s.Store(makeEntry("e3", audit.AuditAuth, now.Add(2*time.Second)))
 
 	result, err := s.Query(audit.Query{
 		EventTypes: []audit.AuditEventType{audit.AuditAuth},

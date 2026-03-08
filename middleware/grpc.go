@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jozefvalachovic/logger/v4"
@@ -45,10 +46,8 @@ func LogGRPCUnary(ctx context.Context, fullMethod string, handler func(ctx conte
 		o(options)
 	}
 
-	for _, m := range options.SkipMethods {
-		if m == fullMethod {
-			return handler(ctx)
-		}
+	if slices.Contains(options.SkipMethods, fullMethod) {
+		return handler(ctx)
 	}
 
 	start := time.Now()
@@ -88,10 +87,8 @@ func LogGRPCStream(ctx context.Context, fullMethod string, handler func(ctx cont
 		o(options)
 	}
 
-	for _, m := range options.SkipMethods {
-		if m == fullMethod {
-			return handler(ctx)
-		}
+	if slices.Contains(options.SkipMethods, fullMethod) {
+		return handler(ctx)
 	}
 
 	start := time.Now()

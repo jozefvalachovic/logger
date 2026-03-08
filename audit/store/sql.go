@@ -196,7 +196,7 @@ func (s *SQLStore) Query(q audit.Query) (*audit.QueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []audit.AuditEntry
 	for rows.Next() {
