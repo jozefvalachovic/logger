@@ -88,7 +88,7 @@ func TestMemoryStoreQuery(t *testing.T) {
 
 func TestMemoryStoreClear(t *testing.T) {
 	s := NewMemoryStore(MemoryStoreConfig{MaxSize: 100})
-	s.Store(makeEntry("e1", audit.AuditAuth, time.Now()))
+	_ = s.Store(makeEntry("e1", audit.AuditAuth, time.Now()))
 	s.Clear()
 	if s.Count() != 0 {
 		t.Errorf("Count() after Clear() = %d, want 0", s.Count())
