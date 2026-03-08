@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -63,7 +64,8 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 		var bodyBytes []byte
 		var bodyErr error
 		truncated := false
-		if r.Body != nil && options.LogBodyOnErrors {
+		shouldCapture := options.LogBodyOnErrors || (options.BodySampleRate > 0 && rand.Float64() < options.BodySampleRate)
+		if r.Body != nil && shouldCapture {
 			bodyBytes, bodyErr = io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize+1))
 			_ = r.Body.Close()
 			if int64(len(bodyBytes)) > cfg.MaxBodySize {
@@ -78,6 +80,8 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 		wrapped.ResponseWriter = w
 		wrapped.statusCode = http.StatusOK
 		wrapped.captureBody = options.LogResponseBody
+		wrapped.maxCaptureBytes = cfg.MaxBodySize
+		wrapped.capturedBytes = 0
 		if options.LogResponseBody {
 			wrapped.responseBody = bufferPool.Get().(*bytes.Buffer)
 			wrapped.responseBody.Reset()
@@ -129,6 +133,9 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 		// Record metrics
 		if options.EnableMetrics && options.MetricsCollector != nil {
 			options.MetricsCollector.RecordRequest(r.Method, fullPath, wrapped.statusCode, duration)
+			if wrapped.statusCode >= 400 {
+				options.MetricsCollector.RecordError(r.Method, fullPath, wrapped.statusCode)
+			}
 		}
 
 		// Call end callback

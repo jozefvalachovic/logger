@@ -47,7 +47,7 @@ func main() {
 	logger.LogInfoWithContext(ctx, "User action", "action", "purchase")
 
 	// Simulate some load
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		logger.LogDebug("Processing item", "item_id", i)
 		logger.LogInfo("Item processed", "item_id", i, "status", "success")
 		time.Sleep(10 * time.Millisecond)

@@ -24,16 +24,15 @@ func getMachineID() string {
 		hostname = "unknown"
 	}
 
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%s-%s", hostname[:min(8, len(hostname))], hex.EncodeToString(b))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based entropy if crypto/rand fails
+		ts := time.Now().UnixNano()
+		for i := range b {
+			b[i] = byte(ts >> (i * 8))
+		}
 	}
-	return b
+	return fmt.Sprintf("%s-%s", hostname[:min(8, len(hostname))], hex.EncodeToString(b))
 }
 
 // generateUUID generates a unique ID for audit entries
@@ -41,13 +40,19 @@ func generateUUID() string {
 	now := time.Now()
 	counter := atomic.AddUint64(&uuidCounter, 1)
 
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based entropy if crypto/rand fails
+		ts := now.UnixNano()
+		for i := range b {
+			b[i] = byte(ts >> (i * 8))
+		}
+	}
 
 	return fmt.Sprintf("%d-%s-%d-%s",
 		now.UnixNano(),
 		machineID,
 		counter,
-		hex.EncodeToString(b[:4]),
+		hex.EncodeToString(b[:8]),
 	)
 }

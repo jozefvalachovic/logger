@@ -8,7 +8,13 @@ import (
 	"github.com/jozefvalachovic/logger/v4"
 )
 
-// LogTCPMiddleware logs when a TCP connection is started and ended, and recovers from panics
+// LogTCPMiddleware logs when a TCP connection is started and ended, and recovers from panics.
+//
+// For typed TCP connections using Go 1.26+ net.Dialer.DialTCP:
+//
+//	d := net.Dialer{Timeout: 5 * time.Second}
+//	conn, err := d.DialTCP(ctx, "tcp", netip.AddrPort{}, raddr)
+//	// conn is *net.TCPConn — use LogTCPMiddleware to wrap the handler.
 func LogTCPMiddleware(next func(conn net.Conn)) func(conn net.Conn) {
 	return func(conn net.Conn) {
 		start := time.Now()

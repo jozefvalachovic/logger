@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"sort"
 	"sync"
 
@@ -80,15 +81,9 @@ func (s *MemoryStore) Query(q audit.Query) (*audit.QueryResult, error) {
 
 	total := len(matches)
 
-	start := q.Offset
-	if start > total {
-		start = total
-	}
+	start := min(q.Offset, total)
 
-	end := start + q.Limit
-	if end > total {
-		end = total
-	}
+	end := min(start+q.Limit, total)
 
 	result := &audit.QueryResult{
 		Entries:    matches[start:end],
@@ -176,28 +171,13 @@ func (s *MemoryStore) matchesQuery(entry audit.AuditEntry, q audit.Query) bool {
 }
 
 func containsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }
 
 func containsEventType(slice []audit.AuditEventType, t audit.AuditEventType) bool {
-	for _, item := range slice {
-		if item == t {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, t)
 }
 
 func containsOutcome(slice []audit.AuditOutcome, o audit.AuditOutcome) bool {
-	for _, item := range slice {
-		if item == o {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, o)
 }

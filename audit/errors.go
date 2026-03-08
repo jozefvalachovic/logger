@@ -1,6 +1,9 @@
 package audit
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Validation errors
 var (
@@ -34,3 +37,32 @@ var (
 	ErrEntryNotFound      = errors.New("audit: entry not found")
 	ErrInvalidQuery       = errors.New("audit: invalid query parameters")
 )
+
+// Typed error wrappers for use with errors.AsType[T] (Go 1.26+).
+
+// SinkError represents an error originating from an audit sink.
+type SinkError struct {
+	SinkName string
+	Err      error
+}
+
+func (e *SinkError) Error() string { return fmt.Sprintf("audit sink %q: %v", e.SinkName, e.Err) }
+func (e *SinkError) Unwrap() error { return e.Err }
+
+// WALError represents an error originating from the write-ahead log.
+type WALError struct {
+	Op  string // operation that failed (e.g., "write", "commit", "recover")
+	Err error
+}
+
+func (e *WALError) Error() string { return fmt.Sprintf("audit wal %s: %v", e.Op, e.Err) }
+func (e *WALError) Unwrap() error { return e.Err }
+
+// StoreError represents an error originating from the audit store.
+type StoreError struct {
+	Op  string // operation that failed (e.g., "store", "query", "get")
+	Err error
+}
+
+func (e *StoreError) Error() string { return fmt.Sprintf("audit store %s: %v", e.Op, e.Err) }
+func (e *StoreError) Unwrap() error { return e.Err }

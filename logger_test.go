@@ -77,10 +77,8 @@ func TestLogAudit(t *testing.T) {
 	LogAudit("user", "admin", "key", "login", "secret", "success")
 }
 
-type traceIDKeyType struct{}
-
 func TestLogInfoWithContext(t *testing.T) {
-	ctx := context.WithValue(context.Background(), traceIDKeyType{}, "bench123")
+	ctx := context.WithValue(context.Background(), TraceIDContextKey, "bench123")
 	LogInfoWithContext(ctx, "Test InfoWithContext", "data", "test")
 }
 
@@ -267,7 +265,7 @@ func TestConcurrentLogging(t *testing.T) {
 	var wg sync.WaitGroup
 	concurrency := 100
 
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()

@@ -3,9 +3,12 @@ package logger
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jozefvalachovic/logger/v4/audit"
 )
@@ -35,6 +38,8 @@ type Logger interface {
 	LogAuditEvent(ctx context.Context, event audit.AuditEvent) error
 	LogInfoWithContext(ctx context.Context, message string, keyValues ...any)
 	LogHttpRequest(r *http.Request)
+	With(keyValues ...any) Logger
+	LogErrorWithStack(err error, msg string, keyValues ...any)
 }
 
 // defaultLoggerImpl implements the Logger interface
@@ -86,14 +91,162 @@ func (l *defaultLoggerImpl) LogAuditEvent(ctx context.Context, event audit.Audit
 }
 
 func (l *defaultLoggerImpl) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
-	if traceID := ctx.Value("trace_id"); traceID != nil {
-		keyValues = append(keyValues, "trace_id", traceID)
-	}
-	logInternal(Info, message, keyValues...)
+	LogInfoWithContext(ctx, message, keyValues...)
 }
 
 func (l *defaultLoggerImpl) LogHttpRequest(r *http.Request) {
 	logHttpRequestInternal(r)
+}
+
+func (l *defaultLoggerImpl) With(keyValues ...any) Logger {
+	return &childLogger{fields: keyValues}
+}
+
+func (l *defaultLoggerImpl) LogErrorWithStack(err error, msg string, keyValues ...any) {
+	logErrorWithStackInternal(err, msg, keyValues...)
+}
+
+// childLogger is a logger with pre-set fields prepended to every log call.
+type childLogger struct {
+	fields []any
+}
+
+var _ Logger = (*childLogger)(nil)
+
+func mergeKV(base []any, extra ...any) []any {
+	merged := make([]any, 0, len(base)+len(extra))
+	merged = append(merged, base...)
+	merged = append(merged, extra...)
+	return merged
+}
+
+func (l *childLogger) Log(level LogLevel, message string, keyValues ...any) {
+	logInternal(level, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogDebug(message string, keyValues ...any) {
+	logInternal(Debug, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogInfo(message string, keyValues ...any) {
+	logInternal(Info, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogNotice(message string, keyValues ...any) {
+	logInternal(Notice, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogTrace(message string, keyValues ...any) {
+	logInternal(Trace, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogWarn(message string, keyValues ...any) {
+	logInternal(Warn, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogError(message string, keyValues ...any) {
+	logInternal(Error, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogAudit(keyValues ...any) {
+	logInternal(Audit, "", mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
+	return LogAuditEvent(ctx, event)
+}
+
+func (l *childLogger) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
+	LogInfoWithContext(ctx, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogHttpRequest(r *http.Request) {
+	logHttpRequestInternal(r)
+}
+
+func (l *childLogger) With(keyValues ...any) Logger {
+	return &childLogger{fields: mergeKV(l.fields, keyValues...)}
+}
+
+func (l *childLogger) LogErrorWithStack(err error, msg string, keyValues ...any) {
+	logErrorWithStackInternal(err, msg, mergeKV(l.fields, keyValues...)...)
+}
+
+// With creates a child logger with pre-set key-value fields.
+func With(keyValues ...any) Logger {
+	return &childLogger{fields: keyValues}
+}
+
+// LogErrorWithStack logs an error with type information and stack trace.
+func LogErrorWithStack(err error, msg string, keyValues ...any) {
+	logErrorWithStackInternal(err, msg, keyValues...)
+}
+
+func logErrorWithStackInternal(err error, msg string, keyValues ...any) {
+	kv := []any{
+		"error", err.Error(),
+		"error_type", fmt.Sprintf("%T", err),
+	}
+	var chain []string
+	for ue := errors.Unwrap(err); ue != nil; ue = errors.Unwrap(ue) {
+		chain = append(chain, ue.Error())
+	}
+	if len(chain) > 0 {
+		kv = append(kv, "error_chain", chain)
+	}
+	kv = append(kv, "stack", GetStackTrace())
+	kv = append(kv, keyValues...)
+	logInternal(Error, msg, kv...)
+}
+
+// IfTrace calls fn only if the current log level would output Trace messages.
+func IfTrace(fn func()) {
+	configMu.RLock()
+	level := globalConfig.Level
+	configMu.RUnlock()
+	if level <= LevelTrace {
+		fn()
+	}
+}
+
+// IfDebug calls fn only if the current log level would output Debug messages.
+func IfDebug(fn func()) {
+	configMu.RLock()
+	level := globalConfig.Level
+	configMu.RUnlock()
+	if level <= slog.LevelDebug {
+		fn()
+	}
+}
+
+// IfInfo calls fn only if the current log level would output Info messages.
+func IfInfo(fn func()) {
+	configMu.RLock()
+	level := globalConfig.Level
+	configMu.RUnlock()
+	if level <= slog.LevelInfo {
+		fn()
+	}
+}
+
+// IfWarn calls fn only if the current log level would output Warn messages.
+func IfWarn(fn func()) {
+	configMu.RLock()
+	level := globalConfig.Level
+	configMu.RUnlock()
+	if level <= slog.LevelWarn {
+		fn()
+	}
+}
+
+// IfError calls fn only if the current log level would output Error messages.
+func IfError(fn func()) {
+	configMu.RLock()
+	level := globalConfig.Level
+	configMu.RUnlock()
+	if level <= slog.LevelError {
+		fn()
+	}
 }
 
 // SetConfig configures the logger with custom settings.
@@ -103,7 +256,7 @@ func SetConfig(cfg Config) {
 	if cfg.Output == nil {
 		cfg.Output = defaultConfig.Output
 	}
-	if cfg.Level == 0 {
+	if cfg.Level == 0 && !cfg.LevelSet {
 		cfg.Level = defaultConfig.Level
 	}
 	if cfg.TimeFormat == "" {
@@ -121,9 +274,8 @@ func SetConfig(cfg Config) {
 	if cfg.RedactPaths == nil {
 		cfg.RedactPaths = defaultConfig.RedactPaths
 	}
-	// SampleRate: 0.0 is the zero value, so we treat it as unset and apply default (1.0)
-	// If users want to disable sampling, they should use log level filtering instead
-	if cfg.SampleRate == 0 {
+	// SampleRate: use SampleRateSet to distinguish "not specified" from "explicitly set to 0"
+	if !cfg.SampleRateSet && cfg.SampleRate == 0 {
 		cfg.SampleRate = defaultConfig.SampleRate
 	}
 	if cfg.BufferSize == 0 {
@@ -161,6 +313,17 @@ func SetConfig(cfg Config) {
 		metrics = NewLogMetrics()
 	} else if !cfg.EnableMetrics && metrics != nil {
 		metrics = nil
+	}
+
+	// Handle dedup changes
+	if cfg.EnableDedup && dedupMgr == nil {
+		window := cfg.DedupWindow
+		if window == 0 {
+			window = 5 * time.Second
+		}
+		startDedup(window)
+	} else if !cfg.EnableDedup && dedupMgr != nil {
+		stopDedup()
 	}
 
 	// Handle enterprise audit logger changes
@@ -312,18 +475,23 @@ func GetAuditLogger() *audit.Logger {
 	return auditLogger
 }
 
+// TraceIDKey is the typed context key for trace ID extraction.
+// Use this type when storing trace IDs in context to ensure they are extracted by LogInfoWithContext.
+type traceIDKeyType struct{}
+
+// TraceIDContextKey is the context key for trace IDs used by LogInfoWithContext.
+var TraceIDContextKey = traceIDKeyType{}
+
 // Contextual Log function wrappers
 
-// LogInfo logs an info message with optional key-value pairs
+// LogInfoWithContext logs an info message with optional key-value pairs
 func LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
-	// Extract trace ID from context if available
-	// Try to get value using common key patterns
-	var traceID interface{}
+	// Extract trace ID from context using the typed key first, then fall back to string key
+	var traceID any
 
-	// Check for any key that might contain trace_id
-	// This is a workaround since we can't directly check for the test's custom type
-	// Users should pass trace_id as a regular key-value pair for best results
-	if val := ctx.Value("trace_id"); val != nil {
+	if val := ctx.Value(TraceIDContextKey); val != nil {
+		traceID = val
+	} else if val := ctx.Value("trace_id"); val != nil {
 		traceID = val
 	}
 
@@ -368,7 +536,7 @@ func logHttpRequestInternal(r *http.Request) {
 
 	// Read and log the body if present
 	if r.Body != nil {
-		bodyBytes, err := io.ReadAll(r.Body)
+		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize))
 		if err != nil {
 			logInternal(Error, "Failed to read HTTP request body", "__error", err)
 			return

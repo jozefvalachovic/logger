@@ -37,6 +37,9 @@ type HTTPMiddlewareOptions struct {
 	OnRequestStart func(r *http.Request)
 	// OnRequestEnd callback after request processing
 	OnRequestEnd func(r *http.Request, statusCode int, duration time.Duration)
+	// BodySampleRate samples request bodies for a percentage of all requests (0.0-1.0)
+	// When > 0, bodies are captured and logged even for successful requests.
+	BodySampleRate float64
 }
 
 // HTTPMiddlewareOption is a functional option for configuring middleware
@@ -167,5 +170,12 @@ func WithOnRequestStart(fn func(r *http.Request)) HTTPMiddlewareOption {
 func WithOnRequestEnd(fn func(r *http.Request, statusCode int, duration time.Duration)) HTTPMiddlewareOption {
 	return func(o *HTTPMiddlewareOptions) {
 		o.OnRequestEnd = fn
+	}
+}
+
+// WithBodySampleRate sets the probability of logging request body for all requests (0.0-1.0).
+func WithBodySampleRate(rate float64) HTTPMiddlewareOption {
+	return func(o *HTTPMiddlewareOptions) {
+		o.BodySampleRate = rate
 	}
 }

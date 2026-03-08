@@ -1,3 +1,10 @@
+// Package logger provides a high-performance structured logger with colorized output,
+// audit logging, sampling, rotation, async writes, and metrics collection.
+//
+// The package uses a global singleton configuration by default via SetConfig/GetConfig
+// and the top-level Log* functions. For applications that need multiple independent logger
+// instances with different configurations, use the [Logger] interface via [DefaultLogger]
+// or implement custom instances. The global state is safe for concurrent use.
 package logger
 
 import (
@@ -6,6 +13,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -17,6 +26,7 @@ import (
 type Config struct {
 	Output      io.Writer
 	Level       slog.Level
+	LevelSet    bool // Explicitly marks Level as set (allows setting Level to 0/slog.LevelDebug)
 	EnableColor bool
 	TimeFormat  string
 	RedactKeys  []string
@@ -25,8 +35,9 @@ type Config struct {
 	RedactPaths []string // URL paths to completely redact from logs
 
 	// Sampling configuration
-	SampleRate float64 // 0.0 to 1.0, where 0.1 = log 10% of messages (0 = disabled, 1.0 = all)
-	SampleSeed int64   // Seed for deterministic sampling
+	SampleRate    float64 // 0.0 to 1.0, where 0.1 = log 10% of messages (default: 1.0 = all)
+	SampleRateSet bool    // Explicitly marks SampleRate as set (allows setting to 0.0)
+	SampleSeed    int64   // Seed for deterministic sampling
 
 	// Rotation configuration
 	Rotation *RotationConfig
@@ -39,6 +50,24 @@ type Config struct {
 	// Metrics configuration
 	EnableMetrics bool
 	MetricsPrefix string // Prefix for metric names (default: "logger")
+
+	// Caller attribution: includes source file:line in log output
+	EnableCaller bool
+
+	// Regex-based value redaction patterns (applied to all string values)
+	RedactPatterns []string
+
+	// Output format options
+	CompactJSON  bool // Single-line JSON instead of indented
+	ColorizeJSON bool // Colorize JSON keys (requires EnableColor)
+
+	// Deduplication: suppress repeated identical messages within a window
+	EnableDedup bool
+	DedupWindow time.Duration // Default: 5s
+
+	// AdditionalHandlers allows sending log output to multiple destinations
+	// using slog.NewMultiHandler (Go 1.26+). The prettyHandler is always included.
+	AdditionalHandlers []slog.Handler
 
 	// Enterprise Audit configuration (nil = use legacy LogAudit behavior)
 	Audit *audit.Config
@@ -65,6 +94,11 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxBodySize < 0 {
 		return fmt.Errorf("MaxBodySize cannot be negative")
+	}
+	for _, p := range c.RedactPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("invalid redact pattern %q: %w", p, err)
+		}
 	}
 	if c.Audit != nil {
 		if err := c.Audit.Validate(); err != nil {
@@ -110,6 +144,7 @@ var (
 		FlushTimeout:  time.Second,
 		EnableMetrics: false,
 		MetricsPrefix: "logger",
+		DedupWindow:   5 * time.Second,
 		Audit:         nil, // Legacy behavior by default
 	}
 )
@@ -117,6 +152,7 @@ var (
 func init() {
 	configMu.Lock()
 	globalConfig = defaultConfig
+	applyEnvOverrides(&globalConfig)
 	configMu.Unlock()
 	initLogger()
 }
@@ -129,11 +165,20 @@ func initLogger() {
 
 	opts := prettyHandlerOptions{
 		SlogOpts: slog.HandlerOptions{
-			Level: cfg.Level,
+			Level:     cfg.Level,
+			AddSource: cfg.EnableCaller,
 		},
 		Config: cfg,
 	}
-	defaultLogger = slog.New(newPrettyHandler(cfg.Output, opts))
+
+	var handler slog.Handler = newPrettyHandler(cfg.Output, opts)
+	if len(cfg.AdditionalHandlers) > 0 {
+		allHandlers := make([]slog.Handler, 0, len(cfg.AdditionalHandlers)+1)
+		allHandlers = append(allHandlers, handler)
+		allHandlers = append(allHandlers, cfg.AdditionalHandlers...)
+		handler = slog.NewMultiHandler(allHandlers...)
+	}
+	defaultLogger = slog.New(handler)
 }
 
 // logInternal is an internal function to log messages with key-value pairs
@@ -152,9 +197,24 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 		return
 	}
 
+	// Apply deduplication
+	if cfg.EnableDedup && dedupMgr != nil {
+		if !dedupMgr.ShouldLog(level, message) {
+			return
+		}
+	}
+
 	// Track metrics
 	if cfg.EnableMetrics && metrics != nil {
 		metrics.RecordLog(level)
+	}
+
+	// Capture caller PC for source attribution
+	var pc uintptr
+	if cfg.EnableCaller {
+		var pcs [1]uintptr
+		runtime.Callers(3, pcs[:])
+		pc = pcs[0]
 	}
 
 	// Use async logging if enabled
@@ -163,23 +223,24 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 			level:     level,
 			message:   message,
 			keyValues: keyValues,
+			pc:        pc,
 		}
 		select {
 		case logChan <- entry:
 			// Successfully queued
 		default:
 			// Channel full, fall back to sync logging
-			logInternalSync(level, message, keyValues...)
+			logInternalSync(level, message, pc, keyValues...)
 		}
 		return
 	}
 
 	// Synchronous logging
-	logInternalSync(level, message, keyValues...)
+	logInternalSync(level, message, pc, keyValues...)
 }
 
 // logInternalSync performs synchronous logging (used by both sync and async paths)
-func logInternalSync(level LogLevel, message string, keyValues ...any) {
+func logInternalSync(level LogLevel, message string, pc uintptr, keyValues ...any) {
 	configMu.RLock()
 	cfg := globalConfig
 	configMu.RUnlock()
@@ -201,27 +262,10 @@ func logInternalSync(level LogLevel, message string, keyValues ...any) {
 		}
 	}
 
-	anyAttrs := make([]any, len(attrs))
-	for i, attr := range attrs {
-		anyAttrs[i] = attr
-	}
-
-	switch level {
-	case Debug:
-		defaultLogger.Debug(message, anyAttrs...)
-	case Trace:
-		defaultLogger.Log(context.Background(), LevelTrace, message, anyAttrs...)
-	case Info:
-		defaultLogger.Info(message, anyAttrs...)
-	case Notice:
-		defaultLogger.Log(context.Background(), LevelNotice, message, anyAttrs...)
-	case Warn:
-		defaultLogger.Warn(message, anyAttrs...)
-	case Error:
-		defaultLogger.Error(message, anyAttrs...)
-	case Audit:
-		defaultLogger.Log(context.Background(), LevelAudit, message, anyAttrs...)
-	}
+	slogLevel := slogLevelFromLogLevel(level)
+	record := slog.NewRecord(time.Now(), slogLevel, message, pc)
+	record.AddAttrs(attrs...)
+	_ = defaultLogger.Handler().Handle(context.Background(), record)
 }
 
 // slogLevelFromLogLevel converts LogLevel to slog.Level

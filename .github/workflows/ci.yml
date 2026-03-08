@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Cancel redundant runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -18,23 +26,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
-
-      - name: Cache Go modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-1.25-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-1.25-
+          go-version: "1.26"
 
       - name: Download dependencies
         run: go mod download
 
       - name: Verify dependencies
         run: go mod verify
+
+      - name: Check go.mod tidiness
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Run go vet
         run: go vet ./...
@@ -45,13 +48,14 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.out
+          files: ./coverage.out
           flags: unittests
           name: codecov-umbrella
         continue-on-error: true
 
   build:
     name: Build
+    needs: [test]
     runs-on: ubuntu-latest
 
     steps:
@@ -61,13 +65,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Build
-        run: go build -v $(go list ./... | grep -v /examples/)
+        run: go build -v ./...
 
   lint:
     name: Lint
+    needs: [test]
     runs-on: ubuntu-latest
 
     steps:
@@ -77,10 +82,53 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.8.0
           args: --timeout=5m
+
+  tag-release:
+    name: Tag Release
+    needs: [test, build, lint]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Extract version from version.go
+        id: version
+        run: |
+          VERSION=$(grep -oP 'Version\s*=\s*"\K[^"]+' version.go)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract version from version.go"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Detected version: ${TAG}"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.tag }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+          echo "::notice::Tagged and pushed ${{ steps.version.outputs.tag }}"

@@ -7,14 +7,18 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"time"
 )
 
 // prettyHandler is a custom slog.Handler that formats log records in a human-readable way
 type prettyHandler struct {
 	slog.Handler
-	logger *log.Logger
-	config Config
+	logger         *log.Logger
+	config         Config
+	redactPatterns []*regexp.Regexp
 }
 
 // prettyHandlerOptions holds configuration options for the prettyHandler
@@ -53,7 +57,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 		case LevelError:
 			recordLevel = formatString("ERROR", red, false)
 		case LevelAudit:
-			recordLevel = formatString("AUDIT", brightCyan, false) // Bold bright cyan for audit
+			recordLevel = formatString("AUDIT", brightCyan, false)
 		default:
 			recordLevel = formatString(record.Level.String(), gray, false)
 		}
@@ -78,6 +82,17 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 		}
 	}
 
+	// Caller attribution
+	var caller string
+	if handler.config.EnableCaller && record.PC != 0 {
+		fs := runtime.CallersFrames([]uintptr{record.PC})
+		f, _ := fs.Next()
+		caller = fmt.Sprintf("%s:%d", filepath.Base(f.File), f.Line)
+		if handler.config.EnableColor {
+			caller = formatString(caller, gray, false)
+		}
+	}
+
 	recordAttrs := record.NumAttrs()
 
 	fields := make(map[string]any, recordAttrs)
@@ -89,38 +104,83 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 				fields[a.Key] = a.Value.Any()
 			}
 		} else {
-			fields[a.Key] = a.Value.Any()
+			val := a.Value.Any()
+			// Apply regex redaction to string values
+			if s, ok := val.(string); ok {
+				for _, re := range handler.redactPatterns {
+					if re.MatchString(s) {
+						val = handler.config.RedactMask
+						break
+					}
+				}
+			}
+			fields[a.Key] = val
 		}
 		return true
 	})
 
-	jsonData, err := json.MarshalIndent(fields, "", "  ")
-	if err != nil {
-		return err
+	var jsonStr string
+	if recordAttrs > 0 {
+		if handler.config.CompactJSON {
+			jsonData, err := json.Marshal(fields)
+			if err != nil {
+				return err
+			}
+			jsonStr = string(jsonData)
+		} else {
+			jsonData, err := json.MarshalIndent(fields, "", "  ")
+			if err != nil {
+				return err
+			}
+			jsonStr = string(jsonData)
+		}
+		if handler.config.EnableColor && handler.config.ColorizeJSON {
+			jsonStr = colorizeJSONOutput(jsonStr)
+		}
 	}
 
 	// Use config.TimeFormat
 	timeStr := record.Time.Format(handler.config.TimeFormat)
 
+	// Build output parts
+	parts := []any{timeStr, recordLevel}
+	if caller != "" {
+		parts = append(parts, "["+caller+"]")
+	}
 	if record.Message == "" {
 		if recordAttrs > 0 {
-			handler.logger.Println(timeStr, recordLevel, string(jsonData))
-		} else {
-			handler.logger.Println(timeStr, recordLevel)
+			parts = append(parts, jsonStr)
 		}
 	} else {
 		msg := record.Message
 		if handler.config.EnableColor {
 			msg = formatString(record.Message, cyan, false)
 		}
+		parts = append(parts, msg)
 		if recordAttrs > 0 {
-			handler.logger.Println(timeStr, recordLevel, msg, string(jsonData))
-		} else {
-			handler.logger.Println(timeStr, recordLevel, msg)
+			parts = append(parts, jsonStr)
 		}
 	}
 
+	handler.logger.Println(parts...)
+
 	return nil
+}
+
+var jsonKeyColorRe = regexp.MustCompile(`("(?:[^"\\]|\\.)*")\s*:`)
+
+func colorizeJSONOutput(jsonStr string) string {
+	return jsonKeyColorRe.ReplaceAllStringFunc(jsonStr, func(match string) string {
+		// Find last quote before the colon
+		for i := len(match) - 1; i >= 0; i-- {
+			if match[i] == '"' {
+				key := match[:i+1]
+				rest := match[i+1:]
+				return formatString(key, blue, false) + rest
+			}
+		}
+		return match
+	})
 }
 
 // newPrettyHandler creates a new instance of prettyHandler with the given output and options
@@ -129,6 +189,11 @@ func newPrettyHandler(out io.Writer, opts prettyHandlerOptions) *prettyHandler {
 		Handler: slog.NewJSONHandler(out, &opts.SlogOpts),
 		logger:  log.New(out, "", 0),
 		config:  opts.Config,
+	}
+	for _, pattern := range opts.Config.RedactPatterns {
+		if re, err := regexp.Compile(pattern); err == nil {
+			h.redactPatterns = append(h.redactPatterns, re)
+		}
 	}
 	return h
 }

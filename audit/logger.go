@@ -3,7 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -85,11 +85,12 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) error {
 	}
 
 	l.mu.RLock()
-	if l.closed {
-		l.mu.RUnlock()
+	closed := l.closed
+	l.mu.RUnlock()
+
+	if closed {
 		return ErrAuditLoggerClosed
 	}
-	l.mu.RUnlock()
 
 	if l.rateLimiter != nil {
 		if !l.rateLimiter.Allow() {
@@ -103,10 +104,19 @@ func (l *Logger) Log(ctx context.Context, event AuditEvent) error {
 
 	entry := l.createEntry(ctx, event)
 
+	// Hold RLock during channel send to prevent Close() from completing
+	// while we're sending to the buffer
+	l.mu.RLock()
+	if l.closed {
+		l.mu.RUnlock()
+		return ErrAuditLoggerClosed
+	}
 	select {
 	case l.buffer <- entry:
+		l.mu.RUnlock()
 		return nil
 	default:
+		l.mu.RUnlock()
 		return l.processEntry(entry)
 	}
 }
@@ -215,20 +225,16 @@ func (l *Logger) Close() error {
 		l.retentionManager.Stop()
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("audit: close errors: %v", errs)
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (l *Logger) createEntry(ctx context.Context, event AuditEvent) *AuditEntry {
-	entry := &AuditEntry{
+	entry := new(AuditEntry{
 		ID:            generateUUID(),
 		Timestamp:     time.Now().UTC(),
 		Event:         event,
 		SchemaVersion: CurrentSchemaVersion,
-	}
+	})
 
 	if l.cfg.Service != nil {
 		entry.Service = &ServiceInfo{
@@ -252,12 +258,15 @@ func (l *Logger) createEntry(ctx context.Context, event AuditEvent) *AuditEntry 
 
 func (l *Logger) processEntry(entry *AuditEntry) error {
 	if l.hashChain != nil {
-		l.hashChain.Chain(entry)
+		if _, err := l.hashChain.Chain(entry); err != nil {
+			return err
+		}
 	}
 
+	// WAL write BEFORE sink write to ensure recoverability
 	if l.wal != nil {
 		if err := l.wal.Write(entry); err != nil {
-			return err
+			return &WALError{Op: "write", Err: err}
 		}
 	}
 
@@ -265,15 +274,16 @@ func (l *Logger) processEntry(entry *AuditEntry) error {
 		return err
 	}
 
+	// WAL commit AFTER sink write to mark as complete
 	if l.wal != nil {
 		if err := l.wal.Commit(entry.ID); err != nil {
-			return err
+			return &WALError{Op: "commit", Err: err}
 		}
 	}
 
 	if l.store != nil {
 		if err := l.store.Store(entry); err != nil {
-			return err
+			return &StoreError{Op: "store", Err: err}
 		}
 	}
 
@@ -285,13 +295,13 @@ func (l *Logger) writeToSinks(entry *AuditEntry) error {
 		return l.writeToOutput(entry)
 	}
 
-	var lastErr error
+	var errs []error
 	for _, sink := range l.sinks {
 		if err := sink.Write(entry); err != nil {
-			lastErr = err
+			errs = append(errs, &SinkError{SinkName: "sink", Err: err})
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 func (l *Logger) writeToOutput(entry *AuditEntry) error {

@@ -67,15 +67,16 @@ type AuditResource struct {
 
 // AuditEvent represents a single auditable action
 type AuditEvent struct {
-	Type        AuditEventType `json:"type"`
-	Action      string         `json:"action"`
-	Outcome     AuditOutcome   `json:"outcome"`
-	Actor       AuditActor     `json:"actor"`
-	Resource    *AuditResource `json:"resource,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	Changes     *AuditChanges  `json:"changes,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Type          AuditEventType `json:"type"`
+	Action        string         `json:"action"`
+	Outcome       AuditOutcome   `json:"outcome"`
+	Actor         AuditActor     `json:"actor"`
+	Resource      *AuditResource `json:"resource,omitempty"`
+	Description   string         `json:"description,omitempty"`
+	Reason        string         `json:"reason,omitempty"`
+	Changes       *AuditChanges  `json:"changes,omitempty"`
+	CorrelationID string         `json:"correlation_id,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
 // AuditChanges captures before/after state for modifications
@@ -93,6 +94,7 @@ type AuditEntry struct {
 	Trace         *TraceInfo   `json:"trace,omitempty"`
 	Hash          string       `json:"hash,omitempty"`
 	PreviousHash  string       `json:"previous_hash,omitempty"`
+	Signature     string       `json:"signature,omitempty"`
 	Sequence      int64        `json:"sequence"`
 	SchemaVersion string       `json:"schema_version"`
 }

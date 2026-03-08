@@ -2,6 +2,7 @@ package logger
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -87,13 +88,9 @@ func handleStruct(key string, value any) slog.Attr {
 
 	// Fallback to reflection
 	rv := reflect.ValueOf(value)
-	rt := reflect.TypeOf(value)
 
 	fields := make(map[string]any)
-	for i := 0; i < rv.NumField(); i++ {
-		field := rt.Field(i)
-		fieldValue := rv.Field(i)
-
+	for field, fieldValue := range rv.Fields() {
 		// Skip unexported fields
 		if !fieldValue.CanInterface() {
 			continue
@@ -142,9 +139,8 @@ func handleMap(key string, value any) slog.Attr {
 	}
 
 	result := make(map[string]any)
-	for _, mapKey := range rv.MapKeys() {
-		keyStr := mapKey.String()
-		mapValue := rv.MapIndex(mapKey)
+	for mapKey, mapValue := range rv.Seq2() {
+		keyStr := fmt.Sprintf("%v", mapKey.Interface())
 		result[keyStr] = mapValue.Interface()
 	}
 
@@ -192,7 +188,7 @@ func handleComplexType(key string, value any) slog.Attr {
 		return handleSliceOrArray(key, value)
 	case reflect.Map:
 		return handleMap(key, value)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if rv.IsNil() {
 			return slog.String(key, "<nil>")
 		}

@@ -1,6 +1,7 @@
 package sink
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/jozefvalachovic/logger/v4/audit"
@@ -31,13 +32,13 @@ func (m *MultiSink) Write(entry *audit.AuditEntry) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var lastErr error
+	var errs []error
 	for _, sink := range m.sinks {
 		if err := sink.Write(entry); err != nil {
-			lastErr = err
+			errs = append(errs, err)
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 // Flush flushes all sinks
@@ -45,13 +46,13 @@ func (m *MultiSink) Flush() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var lastErr error
+	var errs []error
 	for _, sink := range m.sinks {
 		if err := sink.Flush(); err != nil {
-			lastErr = err
+			errs = append(errs, err)
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 // Close closes all sinks
@@ -59,11 +60,11 @@ func (m *MultiSink) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var lastErr error
+	var errs []error
 	for _, sink := range m.sinks {
 		if err := sink.Close(); err != nil {
-			lastErr = err
+			errs = append(errs, err)
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }

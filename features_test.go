@@ -242,7 +242,7 @@ func TestRotatingWriterBackupCleanup(t *testing.T) {
 	defer func() { _ = writer.Close() }()
 
 	// Write multiple times to trigger several rotations
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		data := strings.Repeat("X", 60)
 		_, _ = writer.Write([]byte(data))
 		time.Sleep(10 * time.Millisecond) // Give time for cleanup goroutine
@@ -265,9 +265,9 @@ func TestMetricsConcurrency(t *testing.T) {
 
 	// Simulate concurrent logging
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				m.RecordLog(Info)
 				m.RecordLog(Error)
 			}
@@ -276,7 +276,7 @@ func TestMetricsConcurrency(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -311,10 +311,10 @@ func TestRotatingWriterCompression(t *testing.T) {
 	// Wait for compression goroutine
 	time.Sleep(200 * time.Millisecond)
 
-	// Check for .bak files (compression is a placeholder, renames to .bak)
-	matches, _ := filepath.Glob(logFile + ".*.bak")
+	// Check for .gz files (real gzip compression)
+	matches, _ := filepath.Glob(logFile + ".*.gz")
 	if len(matches) == 0 {
-		t.Error("Expected backup file (.bak), but found none")
+		t.Error("Expected compressed backup file (.gz), but found none")
 	}
 }
 
@@ -340,7 +340,7 @@ func TestAsyncModeChannelFullFallback(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Fill the channel
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		LogInfo("message %d", "n", i)
 	}
 

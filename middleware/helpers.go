@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,9 +29,11 @@ const (
 // wrappedWriter is used to capture the status code and response body of HTTP responses
 type wrappedWriter struct {
 	http.ResponseWriter
-	statusCode   int
-	responseBody *bytes.Buffer
-	captureBody  bool
+	statusCode      int
+	responseBody    *bytes.Buffer
+	captureBody     bool
+	maxCaptureBytes int64 // Maximum bytes to capture for response body
+	capturedBytes   int64
 }
 
 // WriteHeader captures the status code for logging
@@ -38,10 +42,13 @@ func (w *wrappedWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
-// Write captures the response body if enabled
+// Write captures the response body if enabled, up to maxCaptureBytes
 func (w *wrappedWriter) Write(b []byte) (int, error) {
-	if w.captureBody && w.responseBody != nil {
-		w.responseBody.Write(b)
+	if w.captureBody && w.responseBody != nil && w.capturedBytes < w.maxCaptureBytes {
+		remaining := w.maxCaptureBytes - w.capturedBytes
+		toCapture := min(int64(len(b)), remaining)
+		w.responseBody.Write(b[:toCapture])
+		w.capturedBytes += toCapture
 	}
 	return w.ResponseWriter.Write(b)
 }
@@ -59,13 +66,13 @@ var _ http.Flusher = (*wrappedWriter)(nil)
 // Pools for memory optimization
 var (
 	wrappedWriterPool = sync.Pool{
-		New: func() interface{} {
-			return &wrappedWriter{statusCode: http.StatusOK}
+		New: func() any {
+			return new(wrappedWriter{statusCode: http.StatusOK})
 		},
 	}
 
 	bufferPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return new(bytes.Buffer)
 		},
 	}
@@ -93,7 +100,10 @@ func shouldLogBody(contentType string) bool {
 // generateRequestID generates a random request ID
 func generateRequestID() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID if crypto/rand fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -116,10 +126,8 @@ func GetRequestStart(ctx context.Context) time.Time {
 // shouldSkipPath checks if a path should be skipped from logging
 func shouldSkipPath(path string, options *HTTPMiddlewareOptions) bool {
 	// Check exact matches
-	for _, skip := range options.SkipPaths {
-		if path == skip {
-			return true
-		}
+	if slices.Contains(options.SkipPaths, path) {
+		return true
 	}
 	// Check prefix matches
 	for _, prefix := range options.SkipPathPrefixes {
@@ -203,8 +211,13 @@ func emitAuditEvent(r *http.Request, statusCode int, duration time.Duration, req
 
 	// Extract user ID from context if available
 	if userID := r.Context().Value("user_id"); userID != nil {
-		event.Actor.ID = userID.(string)
-		event.Actor.Type = "user"
+		if id, ok := userID.(string); ok {
+			event.Actor.ID = id
+			event.Actor.Type = "user"
+		} else {
+			event.Actor.ID = fmt.Sprintf("%v", userID)
+			event.Actor.Type = "user"
+		}
 	} else {
 		event.Actor.Type = "anonymous"
 	}
@@ -212,9 +225,14 @@ func emitAuditEvent(r *http.Request, statusCode int, duration time.Duration, req
 	_ = logger.LogAuditEvent(r.Context(), event)
 }
 
-// getClientIP extracts the client IP from a request
+// getClientIP extracts the client IP from a request.
+// WARNING: X-Forwarded-For and X-Real-IP headers can be spoofed by clients.
+// Only trust these headers when the request comes through a trusted reverse proxy.
+// In production, configure your proxy to overwrite (not append) these headers.
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxied requests)
+	// Check X-Forwarded-For header (for proxied requests)
+	// Note: Only the rightmost IP added by a trusted proxy is reliable.
+	// The leftmost IP is client-supplied and may be forged.
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		ips := strings.Split(xff, ",")
 		if len(ips) > 0 {
@@ -284,9 +302,11 @@ func logErrorDetails(r *http.Request, wrapped *wrappedWriter, options *HTTPMiddl
 	if options.LogResponseBody && wrapped.responseBody != nil && wrapped.responseBody.Len() > 0 {
 		respContentType := wrapped.Header().Get("Content-Type")
 		if shouldLogBody(respContentType) {
-			respBody := wrapped.responseBody.Bytes()
-			if int64(len(respBody)) > cfg.MaxBodySize {
-				keyValues = append(keyValues, "response_body", string(respBody[:cfg.MaxBodySize])+"...")
+			// Use Peek to preview response body without consuming the buffer
+			peekSize := min(int64(wrapped.responseBody.Len()), cfg.MaxBodySize)
+			respBody, _ := wrapped.responseBody.Peek(int(peekSize))
+			if int64(wrapped.responseBody.Len()) > cfg.MaxBodySize {
+				keyValues = append(keyValues, "response_body", string(respBody)+"...")
 			} else {
 				respKeyValues := logger.BodyToKeyValues("response_body", respBody)
 				keyValues = append(keyValues, respKeyValues...)

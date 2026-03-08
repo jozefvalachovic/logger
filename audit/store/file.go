@@ -3,6 +3,7 @@ package store
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +45,27 @@ func NewFileStore(cfg FileStoreConfig) (*FileStore, error) {
 
 // Store stores an audit entry (appends to current log file)
 func (s *FileStore) Store(entry *audit.AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("audit store: failed to marshal entry: %w", err)
+	}
+	data = append(data, '\n')
+
+	// Write to the current log file (date-based naming)
+	filename := filepath.Join(s.basePath, "audit-"+entry.Timestamp.Format("2006-01-02")+".jsonl")
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
+	if err != nil {
+		return fmt.Errorf("audit store: failed to open file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("audit store: failed to write entry: %w", err)
+	}
+
 	return nil
 }
 
@@ -79,15 +101,9 @@ func (s *FileStore) Query(q audit.Query) (*audit.QueryResult, error) {
 
 	total := len(matches)
 
-	start := q.Offset
-	if start > total {
-		start = total
-	}
+	start := min(q.Offset, total)
 
-	end := start + q.Limit
-	if end > total {
-		end = total
-	}
+	end := min(start+q.Limit, total)
 
 	result := &audit.QueryResult{
 		Entries:    matches[start:end],

@@ -1,10 +1,14 @@
 package logger
 
 import (
+	"compress/gzip"
 	"fmt"
 	"hash/fnv"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +19,7 @@ type logEntry struct {
 	level     LogLevel
 	message   string
 	keyValues []any
+	pc        uintptr
 }
 
 // LogMetrics tracks logging metrics
@@ -40,23 +45,28 @@ func (m *LogMetrics) RecordLog(level LogLevel) {
 	m.mu.Lock()
 	m.LogsByLevel[level]++
 	if level == Error {
-		m.lastErrorTime = time.Now()
-		// Calculate error rate (errors per second over last minute)
+		now := time.Now()
+		// Calculate error rate (errors per second since first error)
 		totalErrors := m.LogsByLevel[Error]
-		duration := time.Since(m.lastErrorTime).Seconds()
-		if duration > 0 {
-			m.ErrorRate = float64(totalErrors) / duration
+		if m.lastErrorTime.IsZero() {
+			m.lastErrorTime = now
+			m.ErrorRate = 0
+		} else {
+			duration := now.Sub(m.lastErrorTime).Seconds()
+			if duration > 0 {
+				m.ErrorRate = float64(totalErrors) / duration
+			}
 		}
 	}
 	m.mu.Unlock()
 }
 
 // GetMetrics returns a snapshot of current metrics
-func (m *LogMetrics) GetMetrics() map[string]interface{} {
+func (m *LogMetrics) GetMetrics() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"total_logs": atomic.LoadInt64(&m.TotalLogs),
 		"error_rate": m.ErrorRate,
 	}
@@ -139,18 +149,18 @@ func startAsyncLogger(cfg Config) {
 		for {
 			select {
 			case entry := <-logChan:
-				logInternalSync(entry.level, entry.message, entry.keyValues...)
+				logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
 			case <-ticker.C:
 				// Flush any pending logs
 				for len(logChan) > 0 {
 					entry := <-logChan
-					logInternalSync(entry.level, entry.message, entry.keyValues...)
+					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
 				}
 			case <-asyncDone:
 				// Drain remaining logs
 				for len(logChan) > 0 {
 					entry := <-logChan
-					logInternalSync(entry.level, entry.message, entry.keyValues...)
+					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
 				}
 				return
 			}
@@ -294,6 +304,15 @@ func (w *RotatingWriter) cleanOldBackups() {
 	}
 
 	if len(matches) > w.config.MaxBackups {
+		// Sort by modification time (oldest first) to handle clock adjustments
+		sort.Slice(matches, func(i, j int) bool {
+			fi, erri := os.Stat(matches[i])
+			fj, errj := os.Stat(matches[j])
+			if erri != nil || errj != nil {
+				return matches[i] < matches[j]
+			}
+			return fi.ModTime().Before(fj.ModTime())
+		})
 		// Remove oldest files
 		for i := 0; i < len(matches)-w.config.MaxBackups; i++ {
 			_ = os.Remove(matches[i])
@@ -302,14 +321,37 @@ func (w *RotatingWriter) cleanOldBackups() {
 }
 
 func compressFile(filename string) {
-	// TODO: Implement actual gzip compression
-	// For now, this is a no-op placeholder that marks the file
-	// In production, replace with proper gzip implementation:
-	//   - Read the file
-	//   - Compress with gzip.NewWriter
-	//   - Write to filename + ".gz"
-	//   - Remove original file
-	_ = os.Rename(filename, filename+".bak")
+	src, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer func() { _ = src.Close() }()
+
+	dst, err := os.Create(filename + ".gz")
+	if err != nil {
+		return
+	}
+
+	gw := gzip.NewWriter(dst)
+	if _, err := io.Copy(gw, src); err != nil {
+		_ = gw.Close()
+		_ = dst.Close()
+		_ = os.Remove(filename + ".gz")
+		return
+	}
+
+	if err := gw.Close(); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(filename + ".gz")
+		return
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(filename + ".gz")
+		return
+	}
+
+	_ = src.Close()
+	_ = os.Remove(filename)
 }
 
 // Close closes the rotating writer
@@ -324,9 +366,52 @@ func (w *RotatingWriter) Close() error {
 }
 
 // GetMetrics returns the current logger metrics
-func GetMetrics() map[string]interface{} {
+func GetMetrics() map[string]any {
 	if metrics == nil {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	return metrics.GetMetrics()
+}
+
+// MetricsHandler returns an http.Handler that serves metrics in Prometheus exposition format.
+// Enable metrics with logger.SetConfig(logger.Config{EnableMetrics: true}).
+func MetricsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+
+		if metrics == nil {
+			fmt.Fprintln(w, "# No metrics collected (EnableMetrics is false)")
+			return
+		}
+
+		m := metrics.GetMetrics()
+
+		configMu.RLock()
+		prefix := globalConfig.MetricsPrefix
+		configMu.RUnlock()
+		if prefix == "" {
+			prefix = "logger"
+		}
+
+		fmt.Fprintf(w, "# HELP %s_logs_total Total number of log entries\n", prefix)
+		fmt.Fprintf(w, "# TYPE %s_logs_total counter\n", prefix)
+		if total, ok := m["total_logs"].(int64); ok {
+			fmt.Fprintf(w, "%s_logs_total %d\n", prefix, total)
+		}
+
+		fmt.Fprintf(w, "# HELP %s_logs_by_level Log entries by level\n", prefix)
+		fmt.Fprintf(w, "# TYPE %s_logs_by_level counter\n", prefix)
+		for _, level := range []string{"trace", "debug", "info", "notice", "warn", "error", "audit"} {
+			key := "logs_" + level
+			if count, ok := m[key]; ok {
+				fmt.Fprintf(w, "%s_logs_by_level{level=%q} %v\n", prefix, level, count)
+			}
+		}
+
+		fmt.Fprintf(w, "# HELP %s_error_rate Errors per second\n", prefix)
+		fmt.Fprintf(w, "# TYPE %s_error_rate gauge\n", prefix)
+		if rate, ok := m["error_rate"].(float64); ok {
+			fmt.Fprintf(w, "%s_error_rate %f\n", prefix, rate)
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -40,10 +41,6 @@ func (m *DefaultMetricsCollector) RecordRequest(method, path string, statusCode 
 	m.requestsByMethod[method]++
 	m.requestsByStatus[statusCode]++
 	m.totalDuration += duration
-
-	if statusCode >= 400 {
-		m.totalErrors++
-	}
 }
 
 // RecordError records an error metric
@@ -72,14 +69,10 @@ func (m *DefaultMetricsCollector) GetMetrics() map[string]any {
 
 	// Copy maps to avoid race conditions
 	methodsCopy := make(map[string]int64)
-	for k, v := range m.requestsByMethod {
-		methodsCopy[k] = v
-	}
+	maps.Copy(methodsCopy, m.requestsByMethod)
 
 	statusCopy := make(map[int]int64)
-	for k, v := range m.requestsByStatus {
-		statusCopy[k] = v
-	}
+	maps.Copy(statusCopy, m.requestsByStatus)
 
 	return map[string]any{
 		"total_requests":     m.totalRequests,

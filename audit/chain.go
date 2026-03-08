@@ -1,22 +1,26 @@
 package audit
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"hash"
 	"sync"
 )
 
 // HashChain provides tamper detection through cryptographic hash chaining
 type HashChain struct {
-	mu           sync.RWMutex
-	algorithm    string
-	previousHash string
-	signingKey   []byte
-	sequence     int64
+	mu               sync.RWMutex
+	algorithm        string
+	previousHash     string
+	signingKey       []byte
+	sequence         int64
+	enableSignatures bool
+	privateKey       ed25519.PrivateKey
 }
 
 // NewHashChain creates a new HashChain with the specified configuration
@@ -25,16 +29,21 @@ func NewHashChain(cfg HashChainConfig) *HashChain {
 	if algorithm == "" {
 		algorithm = "sha256"
 	}
-	return &HashChain{
-		algorithm:    algorithm,
-		previousHash: "",
-		signingKey:   cfg.SigningKey,
-		sequence:     0,
+	hc := &HashChain{
+		algorithm:        algorithm,
+		previousHash:     "",
+		signingKey:       cfg.SigningKey,
+		sequence:         0,
+		enableSignatures: cfg.EnableSignatures,
 	}
+	if cfg.EnableSignatures && len(cfg.PrivateKey) >= ed25519.PrivateKeySize {
+		hc.privateKey = ed25519.PrivateKey(cfg.PrivateKey)
+	}
+	return hc
 }
 
 // Chain adds an entry to the hash chain and returns the hash
-func (h *HashChain) Chain(entry *AuditEntry) string {
+func (h *HashChain) Chain(entry *AuditEntry) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -42,7 +51,10 @@ func (h *HashChain) Chain(entry *AuditEntry) string {
 	entry.Sequence = h.sequence
 	entry.PreviousHash = h.previousHash
 
-	content := h.hashContent(entry)
+	content, err := h.hashContent(entry)
+	if err != nil {
+		return "", err
+	}
 	var hashStr string
 
 	if len(h.signingKey) > 0 {
@@ -54,15 +66,24 @@ func (h *HashChain) Chain(entry *AuditEntry) string {
 	entry.Hash = hashStr
 	h.previousHash = hashStr
 
-	return hashStr
+	// Sign the hash with Ed25519 if signatures are enabled
+	if h.enableSignatures && len(h.privateKey) > 0 {
+		sig := ed25519.Sign(h.privateKey, []byte(hashStr))
+		entry.Signature = hex.EncodeToString(sig)
+	}
+
+	return hashStr, nil
 }
 
 // Verify checks if an entry's hash is valid
-func (h *HashChain) Verify(entry *AuditEntry) bool {
+func (h *HashChain) Verify(entry *AuditEntry) (bool, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	content := h.hashContent(entry)
+	content, err := h.hashContent(entry)
+	if err != nil {
+		return false, err
+	}
 	var expectedHash string
 
 	if len(h.signingKey) > 0 {
@@ -71,7 +92,7 @@ func (h *HashChain) Verify(entry *AuditEntry) bool {
 		expectedHash = h.plainHash(content)
 	}
 
-	return entry.Hash == expectedHash
+	return entry.Hash == expectedHash, nil
 }
 
 // VerifyChain verifies a sequence of entries forms a valid chain
@@ -84,7 +105,11 @@ func (h *HashChain) VerifyChain(entries []AuditEntry) error {
 		if entries[i].PreviousHash != entries[i-1].Hash {
 			return ErrHashChainBroken
 		}
-		if !h.Verify(&entries[i]) {
+		valid, err := h.Verify(&entries[i])
+		if err != nil {
+			return fmt.Errorf("audit: hash verification failed: %w", err)
+		}
+		if !valid {
 			return ErrHashChainBroken
 		}
 	}
@@ -106,7 +131,7 @@ func (h *HashChain) SetState(previousHash string, sequence int64) {
 	h.sequence = sequence
 }
 
-func (h *HashChain) hashContent(entry *AuditEntry) []byte {
+func (h *HashChain) hashContent(entry *AuditEntry) ([]byte, error) {
 	type hashableEntry struct {
 		ID           string     `json:"id"`
 		Timestamp    int64      `json:"timestamp"`
@@ -123,8 +148,11 @@ func (h *HashChain) hashContent(entry *AuditEntry) []byte {
 		PreviousHash: entry.PreviousHash,
 	}
 
-	data, _ := json.Marshal(he)
-	return data
+	data, err := json.Marshal(he)
+	if err != nil {
+		return nil, fmt.Errorf("audit: failed to marshal hash content: %w", err)
+	}
+	return data, nil
 }
 
 func (h *HashChain) plainHash(data []byte) string {
@@ -149,4 +177,33 @@ func (h *HashChain) hmacHash(data []byte) string {
 	}
 	hasher.Write(data)
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// VerifySignature verifies the Ed25519 signature on an audit entry.
+// Returns false if the entry has no signature or no private key is configured.
+func (h *HashChain) VerifySignature(entry *AuditEntry) (bool, error) {
+	if entry.Signature == "" {
+		return false, nil
+	}
+	if len(h.privateKey) == 0 {
+		return false, fmt.Errorf("audit: no private key for signature verification")
+	}
+	pubKey := h.privateKey.Public().(ed25519.PublicKey)
+	sig, err := hex.DecodeString(entry.Signature)
+	if err != nil {
+		return false, fmt.Errorf("audit: invalid signature encoding: %w", err)
+	}
+	return ed25519.Verify(pubKey, []byte(entry.Hash), sig), nil
+}
+
+// VerifySignatureWithKey verifies a signature using the provided public key.
+func VerifySignatureWithKey(entry *AuditEntry, publicKey ed25519.PublicKey) (bool, error) {
+	if entry.Signature == "" {
+		return false, nil
+	}
+	sig, err := hex.DecodeString(entry.Signature)
+	if err != nil {
+		return false, fmt.Errorf("audit: invalid signature encoding: %w", err)
+	}
+	return ed25519.Verify(publicKey, []byte(entry.Hash), sig), nil
 }
