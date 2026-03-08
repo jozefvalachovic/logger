@@ -2,17 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    tags: ["v*"] # triggered by: pipe release
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
-# Cancel redundant runs on the same branch/PR
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
+env:
+  GOWORK: "off"
 
 jobs:
   test:
@@ -34,16 +30,20 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Check go.mod tidiness
+      - name: Check go fix
         run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+          OUTPUT=$(go fix -diff ./... 2>&1)
+          if [ -n "$OUTPUT" ]; then
+            echo "$OUTPUT"
+            echo "::error::go fix found pending modernizations — run 'go fix ./...' locally"
+            exit 1
+          fi
 
       - name: Run go vet
         run: go vet ./...
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v /example/)
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -55,7 +55,6 @@ jobs:
 
   build:
     name: Build
-    needs: [test]
     runs-on: ubuntu-latest
 
     steps:
@@ -68,11 +67,10 @@ jobs:
           go-version: "1.26"
 
       - name: Build
-        run: go build -v ./...
+        run: go build -v $(go list ./... | grep -v /example/)
 
   lint:
     name: Lint
-    needs: [test]
     runs-on: ubuntu-latest
 
     steps:
@@ -88,13 +86,37 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.8.0
+          install-mode: goinstall
           args: --timeout=5m
 
-  tag-release:
-    name: Tag Release
-    needs: [test, build, lint]
+  release:
+    name: Release
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, build, lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so release notes span all commits
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG_NAME" \
+            --title "Release $TAG_NAME" \
+            --generate-notes
+
+  tag:
+    name: Tag Version
+    runs-on: ubuntu-latest
+    needs: [test, build, lint]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: write
 
@@ -105,30 +127,33 @@ jobs:
       - name: Extract version from version.go
         id: version
         run: |
-          VERSION=$(grep -oP 'Version\s*=\s*"\K[^"]+' version.go)
+          VERSION=$(grep -oP 'const Version = "\K[^"]+' version.go)
           if [ -z "$VERSION" ]; then
             echo "::error::Could not extract version from version.go"
             exit 1
           fi
           TAG="v${VERSION}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Detected version: ${TAG}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $TAG"
 
       - name: Check if tag already exists
         id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.tag }}" | grep -q .; then
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping."
+            echo "Tag $TAG already exists — skipping."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create and push tag
         if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-          echo "::notice::Tagged and pushed ${{ steps.version.outputs.tag }}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
