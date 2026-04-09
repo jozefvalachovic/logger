@@ -11,6 +11,10 @@ import (
 
 // SSESink streams audit events to connected Server-Sent Events (SSE) clients.
 // Use Handler() to get an http.Handler for the SSE endpoint.
+//
+// Security: the SSE endpoint does not perform any authentication or
+// authorization. Callers MUST wrap the handler returned by Handler() with
+// appropriate auth middleware before exposing it on the network.
 type SSESink struct {
 	mu      sync.RWMutex
 	clients map[chan []byte]struct{}

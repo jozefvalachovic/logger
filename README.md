@@ -4,54 +4,62 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 
 ## Features
 
+### Core
 - 🌈 **Colorized log levels** — Trace, Debug, Info, Notice, Warn, Error, Audit with automatic color coding
 - 📊 **Structured logging** — Key-value pairs with JSON-like output
-- 🔐 **Audit logging** — Dedicated audit log level for security and compliance events
 - 🏗️ **Complex data structures** — Structs, arrays, maps, nested objects with JSON tag support
-- 🌐 **HTTP middleware** — Clean request logging with panic recovery and colorized status codes
-- 🔄 **Context support** — Request-scoped loggers via `NewContext` / `FromContext` with full level coverage
-- ⚙️ **Fully configurable** — Output destination, log levels, colors, time format
 - 🎯 **Universal type support** — All Go primitive and complex types
-- 🚀 **High performance** — Optimized with singleton pattern and efficient memory allocation
-- 🔒 **Production ready** — Robust error handling with graceful degradation
-- 🎲 **Log Sampling** — Reduce log volume by sampling a percentage of messages
-- 🔄 **Log Rotation** — Automatic log file rotation based on size or age
+- ⚙️ **Fully configurable** — Output destination, log levels, colors, time format
+- 🗜️ **Compact / Colorized JSON** — Single-line and color-highlighted JSON output modes (`CompactJSON` on by default)
+- ⏭️ **Conditional Evaluation** — `IfDebug()`, `IfTrace()`, etc. skip expensive computations
+- 🌍 **Environment-Aware Defaults** — `ConfigFromEnv()` reads `LOG_LEVEL`, `LOG_COLOR`, `LOG_CALLER`, etc.
+
+### Performance & Reliability
+- 🚀 **High performance** — Lock-free config reads via `atomic.Pointer[Config]`, efficient memory allocation
 - ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
-- 📈 **Metrics** — Built-in log metrics collection and reporting
+- 🔢 **Atomic metrics counters** — `DefaultMetricsCollector` uses `atomic.Int64`, mutex only for map fields
+- 🎲 **Log Sampling** — Reduce log volume by sampling a percentage of messages
+- 🔇 **Log Deduplication** — Suppress repeated messages within a configurable time window
+- 🔄 **Log Rotation** — Automatic log file rotation based on size or age
+- 📈 **Metrics** — Built-in log metrics collection and Prometheus text exposition endpoint
+- 💓 **Health Check** — `HealthCheck()` verifies output writer, buffer usage, and audit state
+- 🛑 **Graceful Shutdown** — `Shutdown()` drains async buffers, flushes dedup, and closes audit (context-deadline aware)
 
-### New in v4.1.0
-
+### Logging API
 - 👶 **Child Loggers** — `With()` creates loggers with pre-set fields for request/module scoping
 - 📍 **Caller Attribution** — Automatic `[file:line]` source location in log output
-- 🛑 **Graceful Shutdown** — `Shutdown()` drains async buffers, flushes dedup, and closes audit
-- 🔭 **OpenTelemetry Bridge** — `OTelBridgeHandler` maps custom levels for OTel-compatible collectors
-- 🔏 **Regex Redaction** — Pattern-based value redaction (emails, credit cards, etc.)
-- 🎚️ **Level Filtering** — `LevelFilterHandler` sets per-handler minimum log levels
 - 🪵 **Error Logging with Stack** — `LogErrorWithStack()` captures error type, chain, and stack trace
-- 🌍 **Environment-Aware Defaults** — `ConfigFromEnv()` reads `LOG_LEVEL`, `LOG_COLOR`, `LOG_CALLER`, etc.
+- 🔏 **Regex Redaction** — Pattern-based value redaction (emails, credit cards, etc.)
+- 🔐 **Audit logging** — Dedicated audit log level for security and compliance events
+- 📡 **stdlib log level sync** — `slog.SetLogLoggerLevel` keeps the stdlib `log` package in sync
+
+### Middleware
+- 🌐 **HTTP middleware** — Clean request logging with panic recovery and colorized status codes
+- 🔄 **Context support** — Request-scoped loggers via `NewContext` / `FromContext` with full level coverage
 - 📡 **gRPC Interceptor Helpers** — Zero-dependency `LogGRPCUnary` / `LogGRPCStream` wrappers
-- 🔇 **Log Deduplication** — Suppress repeated messages within a configurable time window
-- 💓 **Health Check** — `HealthCheck()` verifies output writer, buffer usage, and audit state
-- 📊 **Prometheus Metrics Endpoint** — `MetricsHandler()` serves Prometheus text exposition format
-- ✍️ **Ed25519 Audit Signing** — Cryptographic signatures on audit entries for non-repudiation
-- 🗄️ **SQL Database Store** — `SQLStore` for PostgreSQL, MySQL, SQLite audit storage
-- 🎯 **Body Sampling** — Probabilistic HTTP body capture via `WithBodySampleRate()`
-- 🗜️ **Compact / Colorized JSON** — Single-line and color-highlighted JSON output modes
-- ⏭️ **Conditional Evaluation** — `IfDebug()`, `IfTrace()`, etc. skip expensive computations
 - 🌐 **WebSocket Middleware** — Logs upgrade, tracks messages/bytes, logs close with duration
-- 📺 **SSE Audit Streaming** — Real-time Server-Sent Events stream for audit events
-- 🔗 **Audit Correlation ID** — Link related audit events across services
+- 🎯 **Body Sampling** — Probabilistic HTTP body capture via `WithBodySampleRate()`
+- 🔭 **OpenTelemetry Bridge** — `OTelBridgeHandler` maps custom levels for OTel-compatible collectors
+- 🎚️ **Level Filtering** — `LevelFilterHandler` sets per-handler minimum log levels
 
-### Enterprise Audit (v4)
-
-- 🛡️ **Tamper Detection** — SHA-256/512 hash chain for audit log integrity
+### Enterprise Audit
+- 🔐 **Tamper Detection** — SHA-256/512 hash chain with constant-time verification (`crypto/subtle`)
+- 🧹 **Key material cleanup** — Signing keys zeroed on close for defense in depth
+- ✍️ **Ed25519 Signing** — Cryptographic signatures on audit entries for non-repudiation
 - 💾 **Guaranteed Delivery** — Write-ahead log (WAL) ensures no audit events are lost
-- 🔗 **Distributed Tracing** — W3C, B3, and Jaeger trace context propagation
 - 📤 **Multi-Sink Support** — Write to files, webhooks, and custom destinations simultaneously
+- 🛡️ **Webhook URL validation** — `NewWebhookSink` validates endpoint scheme/host, preventing SSRF
+- 📺 **SSE Audit Streaming** — Real-time Server-Sent Events stream for audit events
+- 🔗 **Distributed Tracing** — W3C, B3, and Jaeger trace context propagation
+- 🔗 **Audit Correlation ID** — Link related audit events across services
 - ⏰ **Retention Policies** — Automatic archival, compression, and cleanup
 - 🏢 **Compliance Presets** — SOC2, HIPAA, PCI-DSS, GDPR, and FedRAMP configurations
 - 🔍 **Query & Export API** — Search audit logs and export to JSON, JSONL, or CSV
 - 🚦 **Rate Limiting** — Token bucket rate limiter to protect downstream systems
+- 🗄️ **SQL Database Store** — `SQLStore` for PostgreSQL, MySQL, SQLite audit storage
+- 🔄 **O(1) memory store eviction** — `MemoryStore` ring buffer with date-based file pruning
+- 🏷️ **Body key namespacing** — HTTP body keys prefixed with `body.` to prevent key collision
+- 🧩 **Typed errors** — `SinkError`, `WALError`, `StoreError` with `errors.AsType[T]` (Go 1.26+)
 
 ## Installation
 
@@ -287,12 +295,15 @@ fileSink, _ := sink.NewFileSink(sink.FileSinkConfig{
 })
 
 // Webhook sink for SIEM integration
-webhookSink := sink.NewWebhookSink(sink.WebhookSinkConfig{
+webhookSink, err := sink.NewWebhookSink(sink.WebhookSinkConfig{
     Endpoint:   "https://siem.example.com/audit",
     Headers:    map[string]string{"Authorization": "Bearer token"},
     MaxRetries: 3,
     BatchSize:  100,
 })
+if err != nil {
+    log.Fatalf("invalid webhook config: %v", err)
+}
 
 // Combine sinks
 multiSink := sink.NewMultiSink(fileSink, webhookSink)
@@ -773,8 +784,9 @@ sseSink := sink.NewSSESink()
 cfg := audit.DefaultConfig()
 cfg.Sinks = []audit.Sink{fileSink, sseSink}
 
-// Expose as HTTP endpoint
-http.Handle("/audit/stream", sseSink.Handler())
+// Expose as HTTP endpoint — WARNING: SSESink has no built-in authentication.
+// Always wrap with auth middleware in production.
+http.Handle("/audit/stream", authMiddleware(sseSink.Handler()))
 
 // Clients connect with: curl -N http://localhost:8080/audit/stream
 // Each audit event is pushed as: data: {"id":"...","event":{...}}

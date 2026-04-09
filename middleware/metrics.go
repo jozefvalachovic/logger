@@ -3,6 +3,7 @@ package middleware
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,13 +16,13 @@ type MetricsCollector interface {
 
 // DefaultMetricsCollector provides basic metrics collection
 type DefaultMetricsCollector struct {
-	mu               sync.RWMutex
-	totalRequests    int64
-	totalErrors      int64
-	totalPanics      int64
+	mu               sync.RWMutex // protects maps only
+	totalRequests    atomic.Int64
+	totalErrors      atomic.Int64
+	totalPanics      atomic.Int64
+	totalDurationNs  atomic.Int64
 	requestsByMethod map[string]int64
 	requestsByStatus map[int]int64
-	totalDuration    time.Duration
 }
 
 // NewDefaultMetricsCollector creates a new default metrics collector
@@ -34,27 +35,23 @@ func NewDefaultMetricsCollector() *DefaultMetricsCollector {
 
 // RecordRequest records a request metric
 func (m *DefaultMetricsCollector) RecordRequest(method, path string, statusCode int, duration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.totalRequests.Add(1)
+	m.totalDurationNs.Add(int64(duration))
 
-	m.totalRequests++
+	m.mu.Lock()
 	m.requestsByMethod[method]++
 	m.requestsByStatus[statusCode]++
-	m.totalDuration += duration
+	m.mu.Unlock()
 }
 
 // RecordError records an error metric
 func (m *DefaultMetricsCollector) RecordError(method, path string, statusCode int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.totalErrors++
+	m.totalErrors.Add(1)
 }
 
 // RecordPanic records a panic metric
 func (m *DefaultMetricsCollector) RecordPanic(method, path string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.totalPanics++
+	m.totalPanics.Add(1)
 }
 
 // GetMetrics returns the current metrics as a map
@@ -62,9 +59,10 @@ func (m *DefaultMetricsCollector) GetMetrics() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	total := m.totalRequests.Load()
 	avgDuration := time.Duration(0)
-	if m.totalRequests > 0 {
-		avgDuration = m.totalDuration / time.Duration(m.totalRequests)
+	if total > 0 {
+		avgDuration = time.Duration(m.totalDurationNs.Load()) / time.Duration(total)
 	}
 
 	// Copy maps to avoid race conditions
@@ -75,9 +73,9 @@ func (m *DefaultMetricsCollector) GetMetrics() map[string]any {
 	maps.Copy(statusCopy, m.requestsByStatus)
 
 	return map[string]any{
-		"total_requests":     m.totalRequests,
-		"total_errors":       m.totalErrors,
-		"total_panics":       m.totalPanics,
+		"total_requests":     total,
+		"total_errors":       m.totalErrors.Load(),
+		"total_panics":       m.totalPanics.Load(),
 		"avg_duration":       avgDuration.String(),
 		"requests_by_method": methodsCopy,
 		"requests_by_status": statusCopy,
@@ -86,56 +84,46 @@ func (m *DefaultMetricsCollector) GetMetrics() map[string]any {
 
 // Reset resets all metrics
 func (m *DefaultMetricsCollector) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.totalRequests.Store(0)
+	m.totalErrors.Store(0)
+	m.totalPanics.Store(0)
+	m.totalDurationNs.Store(0)
 
-	m.totalRequests = 0
-	m.totalErrors = 0
-	m.totalPanics = 0
-	m.totalDuration = 0
+	m.mu.Lock()
 	m.requestsByMethod = make(map[string]int64)
 	m.requestsByStatus = make(map[int]int64)
+	m.mu.Unlock()
 }
 
 // GetTotalRequests returns the total number of requests
 func (m *DefaultMetricsCollector) GetTotalRequests() int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.totalRequests
+	return m.totalRequests.Load()
 }
 
 // GetTotalErrors returns the total number of errors
 func (m *DefaultMetricsCollector) GetTotalErrors() int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.totalErrors
+	return m.totalErrors.Load()
 }
 
 // GetTotalPanics returns the total number of panics
 func (m *DefaultMetricsCollector) GetTotalPanics() int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.totalPanics
+	return m.totalPanics.Load()
 }
 
 // GetAverageDuration returns the average request duration
 func (m *DefaultMetricsCollector) GetAverageDuration() time.Duration {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.totalRequests == 0 {
+	total := m.totalRequests.Load()
+	if total == 0 {
 		return 0
 	}
-	return m.totalDuration / time.Duration(m.totalRequests)
+	return time.Duration(m.totalDurationNs.Load()) / time.Duration(total)
 }
 
 // GetErrorRate returns the error rate as a percentage
 func (m *DefaultMetricsCollector) GetErrorRate() float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.totalRequests == 0 {
+	total := m.totalRequests.Load()
+	if total == 0 {
 		return 0
 	}
-	return float64(m.totalErrors) / float64(m.totalRequests) * 100
+	return float64(m.totalErrors.Load()) / float64(total) * 100
 }

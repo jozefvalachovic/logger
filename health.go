@@ -8,9 +8,7 @@ import (
 func HealthCheck() error {
 	var errs []error
 
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	if cfg.Output == nil {
 		errs = append(errs, fmt.Errorf("health: output writer is nil"))

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -26,6 +27,10 @@ func main() {
 	fmt.Println("\n3. Enterprise Audit with Compliance Preset")
 	fmt.Println("-------------------------------------------")
 	complianceAuditExample()
+
+	fmt.Println("\n4. Typed Error Handling (errors.AsType)")
+	fmt.Println("----------------------------------------")
+	typedErrorExample()
 }
 
 // legacyAuditExample demonstrates the original LogAudit API
@@ -268,6 +273,46 @@ func complianceAuditExample() {
 	if soc2Config.Retention != nil {
 		fmt.Printf("  - Retention: %v\n", soc2Config.Retention.MaxAge)
 	}
+}
+
+// typedErrorExample demonstrates Go 1.26 errors.AsType for audit error handling
+func typedErrorExample() {
+	ctx := context.Background()
+
+	// Create audit logger with intentionally minimal config to trigger errors
+	cfg := audit.DefaultConfig()
+	cfg.EnableStructured = true
+	cfg.WAL.Enabled = false
+
+	auditLogger, err := audit.New(cfg)
+	if err != nil {
+		fmt.Printf("Failed to create audit logger: %v\n", err)
+		return
+	}
+	defer func() { _ = auditLogger.Close() }()
+
+	// Simulate an audit operation that may fail
+	event := audit.AuditEvent{
+		Type:    audit.AuditDataAccess,
+		Action:  "read",
+		Outcome: audit.OutcomeSuccess,
+		Actor:   audit.AuditActor{ID: "user1", Type: "user"},
+	}
+
+	if err := auditLogger.Log(ctx, event); err != nil {
+		// Go 1.26: use errors.AsType instead of errors.As with a pointer variable
+		if sinkErr, ok := errors.AsType[*audit.SinkError](err); ok {
+			fmt.Printf("Sink %q failed: %v\n", sinkErr.SinkName, sinkErr.Err)
+		} else if walErr, ok := errors.AsType[*audit.WALError](err); ok {
+			fmt.Printf("WAL %s operation failed: %v\n", walErr.Op, walErr.Err)
+		} else if storeErr, ok := errors.AsType[*audit.StoreError](err); ok {
+			fmt.Printf("Store %s operation failed: %v\n", storeErr.Op, storeErr.Err)
+		} else {
+			fmt.Printf("Untyped audit error: %v\n", err)
+		}
+	}
+
+	fmt.Println("✓ Typed error handling demonstrated (errors.AsType)")
 }
 
 // Example: Using with the main logger (integrated approach)

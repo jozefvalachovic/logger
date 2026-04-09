@@ -30,10 +30,20 @@ func Shutdown(ctx context.Context) error {
 		dedupMgr = nil
 	}
 
-	// Close audit logger
+	// Close audit logger with context deadline awareness
 	if auditLogger != nil {
-		if err := auditLogger.Close(); err != nil {
-			errs = append(errs, err)
+		auditDone := make(chan error, 1)
+		go func() {
+			auditDone <- auditLogger.Close()
+		}()
+
+		select {
+		case err := <-auditDone:
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-ctx.Done():
+			errs = append(errs, ctx.Err())
 		}
 		auditLogger = nil
 	}

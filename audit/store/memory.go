@@ -8,11 +8,14 @@ import (
 	"github.com/jozefvalachovic/logger/v4/audit"
 )
 
-// MemoryStore is an in-memory audit log store for testing and development
+// MemoryStore is an in-memory audit log store for testing and development.
+// Uses a ring buffer for O(1) eviction when at capacity.
 type MemoryStore struct {
 	mu      sync.RWMutex
-	entries []audit.AuditEntry
-	byID    map[string]int
+	ring    []audit.AuditEntry // fixed-size ring buffer
+	byID    map[string]int     // maps ID → ring index
+	head    int                // next write position
+	size    int                // current entry count (≤ maxSize)
 	maxSize int
 }
 
@@ -29,8 +32,8 @@ func NewMemoryStore(cfg MemoryStoreConfig) *MemoryStore {
 	}
 
 	return &MemoryStore{
-		entries: make([]audit.AuditEntry, 0, maxSize),
-		byID:    make(map[string]int),
+		ring:    make([]audit.AuditEntry, maxSize),
+		byID:    make(map[string]int, maxSize),
 		maxSize: maxSize,
 	}
 }
@@ -40,20 +43,31 @@ func (s *MemoryStore) Store(entry *audit.AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(s.entries) >= s.maxSize {
-		oldest := s.entries[0]
-		delete(s.byID, oldest.ID)
-		s.entries = s.entries[1:]
-
-		for id, idx := range s.byID {
-			s.byID[id] = idx - 1
-		}
+	if s.size >= s.maxSize {
+		// Evict the oldest entry at the current head position (O(1))
+		delete(s.byID, s.ring[s.head].ID)
+	} else {
+		s.size++
 	}
 
-	s.byID[entry.ID] = len(s.entries)
-	s.entries = append(s.entries, *entry)
+	s.ring[s.head] = *entry
+	s.byID[entry.ID] = s.head
+	s.head = (s.head + 1) % s.maxSize
 
 	return nil
+}
+
+// orderedEntries returns entries oldest-first for iteration.
+func (s *MemoryStore) orderedEntries() []audit.AuditEntry {
+	if s.size == 0 {
+		return nil
+	}
+	result := make([]audit.AuditEntry, s.size)
+	for i := range s.size {
+		idx := (s.head - s.size + i + s.maxSize) % s.maxSize
+		result[i] = s.ring[idx]
+	}
+	return result
 }
 
 // Query queries the store
@@ -63,7 +77,7 @@ func (s *MemoryStore) Query(q audit.Query) (*audit.QueryResult, error) {
 
 	var matches []audit.AuditEntry
 
-	for _, entry := range s.entries {
+	for _, entry := range s.orderedEntries() {
 		if s.matchesQuery(entry, q) {
 			matches = append(matches, entry)
 		}
@@ -105,7 +119,7 @@ func (s *MemoryStore) Get(id string) (*audit.AuditEntry, error) {
 		return nil, audit.ErrEntryNotFound
 	}
 
-	entry := s.entries[idx]
+	entry := s.ring[idx]
 	return &entry, nil
 }
 
@@ -118,15 +132,16 @@ func (s *MemoryStore) Close() error {
 func (s *MemoryStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.entries)
+	return s.size
 }
 
 // Clear clears all entries
 func (s *MemoryStore) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries = s.entries[:0]
-	s.byID = make(map[string]int)
+	s.size = 0
+	s.head = 0
+	clear(s.byID)
 }
 
 func (s *MemoryStore) matchesQuery(entry audit.AuditEntry, q audit.Query) bool {

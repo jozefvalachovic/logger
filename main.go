@@ -18,6 +18,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jozefvalachovic/logger/v4/audit"
@@ -111,8 +112,11 @@ func (c *Config) Validate() error {
 // Global logger instance and configuration
 var (
 	defaultLogger *slog.Logger
-	configMu      sync.RWMutex
-	globalConfig  Config
+	globalConfig  atomic.Pointer[Config]
+
+	// configWriteMu serialises SetConfig calls so that read-modify writes
+	// (e.g. comparing old vs new async/audit config) are safe.
+	configWriteMu sync.Mutex
 
 	// Async logging
 	logChan      chan *logEntry
@@ -131,6 +135,7 @@ var (
 		Output:        os.Stdout,
 		Level:         LevelTrace,
 		EnableColor:   true,
+		CompactJSON:   true, // Single-line JSON by default for production log aggregators
 		TimeFormat:    "2006-01-02 15:04:05",
 		RedactKeys:    []string{"password", "secret", "token", "authorization", "bearer", "api_key", "api-key"},
 		RedactMask:    "***",
@@ -150,18 +155,15 @@ var (
 )
 
 func init() {
-	configMu.Lock()
-	globalConfig = defaultConfig
-	applyEnvOverrides(&globalConfig)
-	configMu.Unlock()
+	cfg := defaultConfig
+	applyEnvOverrides(&cfg)
+	globalConfig.Store(&cfg)
 	initLogger()
 }
 
 // initLogger initializes the default logger based on the current configuration
 func initLogger() {
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	opts := prettyHandlerOptions{
 		SlogOpts: slog.HandlerOptions{
@@ -179,14 +181,16 @@ func initLogger() {
 		handler = slog.NewMultiHandler(allHandlers...)
 	}
 	defaultLogger = slog.New(handler)
+
+	// Sync the stdlib log package level with our configured level
+	// so log.Print/log.Printf respect the same threshold (Go 1.26+).
+	slog.SetLogLoggerLevel(cfg.Level)
 }
 
 // logInternal is an internal function to log messages with key-value pairs
 func logInternal(level LogLevel, message string, keyValues ...any) {
 	// Lazy evaluation: skip expensive operations if log level doesn't match
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	if cfg.Level > slogLevelFromLogLevel(level) {
 		return // Early return - don't process if we won't log anyway
@@ -241,9 +245,7 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 
 // logInternalSync performs synchronous logging (used by both sync and async paths)
 func logInternalSync(level LogLevel, message string, pc uintptr, keyValues ...any) {
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	if len(keyValues)%2 != 0 {
 		// Handle odd number of arguments

@@ -281,9 +281,7 @@ func logErrorWithStackInternal(err error, msg string, keyValues ...any) {
 
 // IfTrace calls fn only if the current log level would output Trace messages.
 func IfTrace(fn func()) {
-	configMu.RLock()
-	level := globalConfig.Level
-	configMu.RUnlock()
+	level := globalConfig.Load().Level
 	if level <= LevelTrace {
 		fn()
 	}
@@ -291,9 +289,7 @@ func IfTrace(fn func()) {
 
 // IfDebug calls fn only if the current log level would output Debug messages.
 func IfDebug(fn func()) {
-	configMu.RLock()
-	level := globalConfig.Level
-	configMu.RUnlock()
+	level := globalConfig.Load().Level
 	if level <= slog.LevelDebug {
 		fn()
 	}
@@ -301,9 +297,7 @@ func IfDebug(fn func()) {
 
 // IfInfo calls fn only if the current log level would output Info messages.
 func IfInfo(fn func()) {
-	configMu.RLock()
-	level := globalConfig.Level
-	configMu.RUnlock()
+	level := globalConfig.Load().Level
 	if level <= slog.LevelInfo {
 		fn()
 	}
@@ -311,9 +305,7 @@ func IfInfo(fn func()) {
 
 // IfWarn calls fn only if the current log level would output Warn messages.
 func IfWarn(fn func()) {
-	configMu.RLock()
-	level := globalConfig.Level
-	configMu.RUnlock()
+	level := globalConfig.Load().Level
 	if level <= slog.LevelWarn {
 		fn()
 	}
@@ -321,9 +313,7 @@ func IfWarn(fn func()) {
 
 // IfError calls fn only if the current log level would output Error messages.
 func IfError(fn func()) {
-	configMu.RLock()
-	level := globalConfig.Level
-	configMu.RUnlock()
+	level := globalConfig.Load().Level
 	if level <= slog.LevelError {
 		fn()
 	}
@@ -375,10 +365,10 @@ func SetConfig(cfg Config) {
 	}
 
 	// Handle async mode changes
-	configMu.RLock()
-	oldAsync := globalConfig.AsyncMode
-	oldAuditConfig := globalConfig.Audit
-	configMu.RUnlock()
+	configWriteMu.Lock()
+	oldCfg := globalConfig.Load()
+	oldAsync := oldCfg.AsyncMode
+	oldAuditConfig := oldCfg.Audit
 
 	if cfg.AsyncMode && !oldAsync {
 		// Starting async mode
@@ -429,17 +419,14 @@ func SetConfig(cfg Config) {
 		}
 	}
 
-	configMu.Lock()
-	globalConfig = cfg
-	configMu.Unlock()
+	globalConfig.Store(&cfg)
+	configWriteMu.Unlock()
 	initLogger()
 }
 
 // GetConfig returns the current logger configuration.
 func GetConfig() Config {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return globalConfig
+	return *globalConfig.Load()
 }
 
 // Basic Log function
@@ -491,9 +478,7 @@ func LogAudit(keyValues ...any) {
 // LogAuditEvent logs a structured audit event using the enterprise audit logger
 // If enterprise audit is not configured, falls back to legacy LogAudit behavior
 func LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	// If enterprise audit is configured, use it
 	if cfg.Audit != nil && auditLogger != nil {
@@ -537,9 +522,7 @@ func LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
 // LogAuditEventSync logs a structured audit event synchronously (guaranteed delivery)
 // Only available when enterprise audit is configured
 func LogAuditEventSync(ctx context.Context, event audit.AuditEvent) error {
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	if cfg.Audit != nil && auditLogger != nil {
 		return auditLogger.LogSync(ctx, event)
@@ -619,9 +602,7 @@ func LogHttpRequest(r *http.Request) {
 
 // logHttpRequestInternal is the internal implementation for logging HTTP requests
 func logHttpRequestInternal(r *http.Request) {
-	configMu.RLock()
-	cfg := globalConfig
-	configMu.RUnlock()
+	cfg := *globalConfig.Load()
 
 	// Check if path should be redacted
 	fullPath := getFullPath(r.URL)

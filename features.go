@@ -157,9 +157,8 @@ func startAsyncLogger(cfg Config) {
 					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
 				}
 			case <-asyncDone:
-				// Drain remaining logs
-				for len(logChan) > 0 {
-					entry := <-logChan
+				// Drain remaining logs (channel is closed by stopAsyncLogger)
+				for entry := range logChan {
 					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
 				}
 				return
@@ -386,9 +385,7 @@ func MetricsHandler() http.Handler {
 
 		m := metrics.GetMetrics()
 
-		configMu.RLock()
-		prefix := globalConfig.MetricsPrefix
-		configMu.RUnlock()
+		prefix := globalConfig.Load().MetricsPrefix
 		if prefix == "" {
 			prefix = "logger"
 		}

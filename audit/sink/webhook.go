@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -40,7 +41,20 @@ type WebhookSinkConfig struct {
 }
 
 // NewWebhookSink creates a new webhook sink
-func NewWebhookSink(cfg WebhookSinkConfig) *WebhookSink {
+func NewWebhookSink(cfg WebhookSinkConfig) (*WebhookSink, error) {
+	// Validate the endpoint URL: only http and https schemes are allowed to
+	// prevent SSRF via file://, gopher://, etc.
+	u, err := url.Parse(cfg.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("sink: invalid webhook endpoint URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("sink: webhook endpoint must use http or https scheme, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("sink: webhook endpoint must include a host")
+	}
+
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -81,7 +95,7 @@ func NewWebhookSink(cfg WebhookSinkConfig) *WebhookSink {
 	ws.flushTicker = time.NewTicker(flushInterval)
 	go ws.flushLoop()
 
-	return ws
+	return ws, nil
 }
 
 // Write adds an entry to the buffer

@@ -21,6 +21,9 @@ type SQLStore struct {
 // NewSQLStore creates a new SQL-backed audit store.
 // The table is created automatically if it doesn't exist.
 // The table name must contain only letters, digits, and underscores.
+//
+// Security: the table name is concatenated into SQL statements but is validated
+// by isValidTableName (alphanumeric + underscore, max 64 chars) to prevent injection.
 func NewSQLStore(db *sql.DB, table string) (*SQLStore, error) {
 	if table == "" {
 		table = "audit_log"

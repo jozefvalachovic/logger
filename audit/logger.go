@@ -221,6 +221,10 @@ func (l *Logger) Close() error {
 		}
 	}
 
+	if l.hashChain != nil {
+		l.hashChain.Close()
+	}
+
 	if l.retentionManager != nil {
 		l.retentionManager.Stop()
 	}

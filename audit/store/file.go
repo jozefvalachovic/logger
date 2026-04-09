@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jozefvalachovic/logger/v4/audit"
 )
@@ -82,6 +83,20 @@ func (s *FileStore) Query(q audit.Query) (*audit.QueryResult, error) {
 	var matches []audit.AuditEntry
 
 	for _, file := range files {
+		// Date-based pruning: skip files outside the query time range.
+		// Files are named audit-YYYY-MM-DD.jsonl by convention.
+		if !q.TimeRange.Start.IsZero() || !q.TimeRange.End.IsZero() {
+			if fileDate, ok := parseDateFromFilename(filepath.Base(file)); ok {
+				nextDay := fileDate.AddDate(0, 0, 1)
+				if !q.TimeRange.Start.IsZero() && nextDay.Before(q.TimeRange.Start) {
+					continue // entire file is before the query start
+				}
+				if !q.TimeRange.End.IsZero() && fileDate.After(q.TimeRange.End) {
+					continue // entire file is after the query end
+				}
+			}
+		}
+
 		entries, err := s.readFile(file, q)
 		if err != nil {
 			continue
@@ -242,4 +257,15 @@ func (s *FileStore) matchesQuery(entry audit.AuditEntry, q audit.Query) bool {
 	}
 
 	return true
+}
+
+// parseDateFromFilename extracts a date from filenames like "audit-2006-01-02.jsonl".
+func parseDateFromFilename(name string) (time.Time, bool) {
+	// Look for a YYYY-MM-DD substring.
+	for i := 0; i <= len(name)-10; i++ {
+		if t, err := time.Parse("2006-01-02", name[i:i+10]); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }

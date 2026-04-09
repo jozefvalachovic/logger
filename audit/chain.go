@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -92,7 +93,7 @@ func (h *HashChain) Verify(entry *AuditEntry) (bool, error) {
 		expectedHash = h.plainHash(content)
 	}
 
-	return entry.Hash == expectedHash, nil
+	return subtle.ConstantTimeCompare([]byte(entry.Hash), []byte(expectedHash)) == 1, nil
 }
 
 // VerifyChain verifies a sequence of entries forms a valid chain
@@ -102,7 +103,7 @@ func (h *HashChain) VerifyChain(entries []AuditEntry) error {
 	}
 
 	for i := 1; i < len(entries); i++ {
-		if entries[i].PreviousHash != entries[i-1].Hash {
+		if subtle.ConstantTimeCompare([]byte(entries[i].PreviousHash), []byte(entries[i-1].Hash)) != 1 {
 			return ErrHashChainBroken
 		}
 		valid, err := h.Verify(&entries[i])
@@ -206,4 +207,19 @@ func VerifySignatureWithKey(entry *AuditEntry, publicKey ed25519.PublicKey) (boo
 		return false, fmt.Errorf("audit: invalid signature encoding: %w", err)
 	}
 	return ed25519.Verify(publicKey, []byte(entry.Hash), sig), nil
+}
+
+// Close zeroes all sensitive key material held by the HashChain.
+// After Close, the chain must not be used for signing or HMAC operations.
+func (h *HashChain) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.signingKey {
+		h.signingKey[i] = 0
+	}
+	h.signingKey = nil
+	for i := range h.privateKey {
+		h.privateKey[i] = 0
+	}
+	h.privateKey = nil
 }

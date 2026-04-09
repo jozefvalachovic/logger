@@ -65,10 +65,11 @@ func BodyToKeyValues(key string, body []byte) []any {
 func bodyToKeyValues(key string, body []byte) []any {
 	var obj map[string]any
 	if err := json.Unmarshal(body, &obj); err == nil {
-		// Valid JSON: flatten to key-value pairs
+		// Valid JSON: flatten to key-value pairs under "body." prefix
+		// to prevent collision with internal keys like __method, __status.
 		keyValues := make([]any, 0, len(obj)*2)
 		for k, v := range obj {
-			keyValues = append(keyValues, k, v)
+			keyValues = append(keyValues, "body."+k, v)
 		}
 		return keyValues
 	}
