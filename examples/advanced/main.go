@@ -8,14 +8,6 @@ import (
 	"github.com/jozefvalachovic/logger/v4"
 )
 
-// contextKey is a custom type for context keys to avoid collisions
-type contextKey string
-
-const (
-	requestIDKey contextKey = "request_id"
-	userIDKey    contextKey = "user_id"
-)
-
 func main() {
 	// Configure logger with advanced settings
 	logger.SetConfig(logger.Config{
@@ -40,11 +32,18 @@ func main() {
 
 	logger.LogInfo("Advanced features configured")
 
-	// Context-aware logging
-	ctx := context.WithValue(context.Background(), requestIDKey, "req-abc123")
-	ctx = context.WithValue(ctx, userIDKey, "user456")
+	// Request-scoped logger via context
+	// Simulate what middleware does: store an enriched logger in context
+	child := logger.DefaultLogger().With("requestId", "req-abc123", "userId", "user456")
+	ctx := logger.NewContext(context.Background(), child)
 
-	logger.LogInfoWithContext(ctx, "User action", "action", "purchase")
+	// Downstream handler retrieves the enriched logger automatically
+	l := logger.FromContext(ctx)
+	l.LogInfo("User action", "action", "purchase")
+
+	// Or use the package-level context-aware helpers
+	logger.LogWarnWithContext(ctx, "Inventory low", "item", "widget")
+	logger.LogErrorWithContext(ctx, "Payment failed", "reason", "timeout")
 
 	// Simulate some load
 	for i := range 100 {

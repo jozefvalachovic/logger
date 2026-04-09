@@ -25,6 +25,32 @@ const (
 	Audit // Security audit logs
 )
 
+// loggerCtxKey is the private context key used to store a Logger in a context.Context.
+type loggerCtxKey struct{}
+
+// NewContext returns a copy of ctx that carries the given Logger.
+//
+// Use this in middleware to store an enriched logger that downstream handlers
+// can retrieve with FromContext:
+//
+//	child := logger.DefaultLogger().With("requestId", reqID)
+//	ctx = logger.NewContext(ctx, child)
+func NewContext(ctx context.Context, l Logger) context.Context {
+	return context.WithValue(ctx, loggerCtxKey{}, l)
+}
+
+// FromContext extracts the Logger stored by NewContext.
+// If no Logger is found, it returns DefaultLogger() (never nil).
+//
+//	l := logger.FromContext(r.Context())
+//	l.LogInfo("handling request")
+func FromContext(ctx context.Context) Logger {
+	if l, ok := ctx.Value(loggerCtxKey{}).(Logger); ok {
+		return l
+	}
+	return DefaultLogger()
+}
+
 // Logger interface for dependency injection
 type Logger interface {
 	Log(level LogLevel, message string, keyValues ...any)
@@ -37,6 +63,12 @@ type Logger interface {
 	LogAudit(keyValues ...any)
 	LogAuditEvent(ctx context.Context, event audit.AuditEvent) error
 	LogInfoWithContext(ctx context.Context, message string, keyValues ...any)
+	LogWithContext(ctx context.Context, level LogLevel, message string, keyValues ...any)
+	LogDebugWithContext(ctx context.Context, message string, keyValues ...any)
+	LogTraceWithContext(ctx context.Context, message string, keyValues ...any)
+	LogNoticeWithContext(ctx context.Context, message string, keyValues ...any)
+	LogWarnWithContext(ctx context.Context, message string, keyValues ...any)
+	LogErrorWithContext(ctx context.Context, message string, keyValues ...any)
 	LogHttpRequest(r *http.Request)
 	With(keyValues ...any) Logger
 	LogErrorWithStack(err error, msg string, keyValues ...any)
@@ -92,6 +124,30 @@ func (l *defaultLoggerImpl) LogAuditEvent(ctx context.Context, event audit.Audit
 
 func (l *defaultLoggerImpl) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
 	LogInfoWithContext(ctx, message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogWithContext(ctx context.Context, level LogLevel, message string, keyValues ...any) {
+	FromContext(ctx).Log(level, message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogDebugWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogDebug(message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogTraceWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogTrace(message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogNoticeWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogNotice(message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogWarnWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogWarn(message, keyValues...)
+}
+
+func (l *defaultLoggerImpl) LogErrorWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogError(message, keyValues...)
 }
 
 func (l *defaultLoggerImpl) LogHttpRequest(r *http.Request) {
@@ -158,6 +214,30 @@ func (l *childLogger) LogAuditEvent(ctx context.Context, event audit.AuditEvent)
 
 func (l *childLogger) LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
 	LogInfoWithContext(ctx, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogWithContext(ctx context.Context, level LogLevel, message string, keyValues ...any) {
+	FromContext(ctx).Log(level, message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogDebugWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogDebug(message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogTraceWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogTrace(message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogNoticeWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogNotice(message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogWarnWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogWarn(message, mergeKV(l.fields, keyValues...)...)
+}
+
+func (l *childLogger) LogErrorWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogError(message, mergeKV(l.fields, keyValues...)...)
 }
 
 func (l *childLogger) LogHttpRequest(r *http.Request) {
@@ -484,7 +564,8 @@ var TraceIDContextKey = traceIDKeyType{}
 
 // Contextual Log function wrappers
 
-// LogInfoWithContext logs an info message with optional key-value pairs
+// Deprecated: LogInfoWithContext extracts trace_id from ctx for backward compatibility.
+// Prefer storing an enriched logger via NewContext and using LogWithContext / FromContext instead.
 func LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
 	// Extract trace ID from context using the typed key first, then fall back to string key
 	var traceID any
@@ -499,6 +580,36 @@ func LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
 		keyValues = append(keyValues, "trace_id", traceID)
 	}
 	logInternal(Info, message, keyValues...)
+}
+
+// LogWithContext retrieves the Logger from ctx (see NewContext / FromContext) and logs at the given level.
+func LogWithContext(ctx context.Context, level LogLevel, message string, keyValues ...any) {
+	FromContext(ctx).Log(level, message, keyValues...)
+}
+
+// LogDebugWithContext retrieves the Logger from ctx and logs at Debug level.
+func LogDebugWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogDebug(message, keyValues...)
+}
+
+// LogTraceWithContext retrieves the Logger from ctx and logs at Trace level.
+func LogTraceWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogTrace(message, keyValues...)
+}
+
+// LogNoticeWithContext retrieves the Logger from ctx and logs at Notice level.
+func LogNoticeWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogNotice(message, keyValues...)
+}
+
+// LogWarnWithContext retrieves the Logger from ctx and logs at Warn level.
+func LogWarnWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogWarn(message, keyValues...)
+}
+
+// LogErrorWithContext retrieves the Logger from ctx and logs at Error level.
+func LogErrorWithContext(ctx context.Context, message string, keyValues ...any) {
+	FromContext(ctx).LogError(message, keyValues...)
 }
 
 // LogHttpRequest logs details of an HTTP request

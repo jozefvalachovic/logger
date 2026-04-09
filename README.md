@@ -9,7 +9,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🔐 **Audit logging** — Dedicated audit log level for security and compliance events
 - 🏗️ **Complex data structures** — Structs, arrays, maps, nested objects with JSON tag support
 - 🌐 **HTTP middleware** — Clean request logging with panic recovery and colorized status codes
-- 🔄 **Context support** — Distributed tracing with context-aware logging
+- 🔄 **Context support** — Request-scoped loggers via `NewContext` / `FromContext` with full level coverage
 - ⚙️ **Fully configurable** — Output destination, log levels, colors, time format
 - 🎯 **Universal type support** — All Go primitive and complex types
 - 🚀 **High performance** — Optimized with singleton pattern and efficient memory allocation
@@ -142,17 +142,35 @@ func main() {
 
 ### Context-Aware Logging
 
+Store an enriched logger in the request context once (typically in middleware), then retrieve it anywhere downstream:
+
 ```go
 import (
     "context"
+    "net/http"
     "github.com/jozefvalachovic/logger/v4"
 )
 
-func handleRequest(ctx context.Context) {
-    ctx = context.WithValue(ctx, "trace_id", "abc123def456")
-    logger.LogInfoWithContext(ctx, "Processing request", "step", 1)
+// Middleware stores a child logger with request-scoped fields
+func requestMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        child := logger.DefaultLogger().With("requestId", r.Header.Get("X-Request-ID"))
+        ctx := logger.NewContext(r.Context(), child)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+// Handlers retrieve the enriched logger automatically
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+    l := logger.FromContext(r.Context())
+    l.LogInfo("Processing request", "step", 1)
+
+    // Or use the package-level context-aware helpers
+    logger.LogWarnWithContext(r.Context(), "Inventory low", "item", "widget")
 }
 ```
+
+The built-in HTTP middleware (`middleware.LogHTTPMiddleware`) already calls `logger.NewContext` when request IDs are enabled, so downstream handlers can use `logger.FromContext(ctx)` out of the box.
 
 ## Log Levels
 
@@ -998,8 +1016,14 @@ logger.LogTrace("Trace message", "key", "value")
 logger.LogWarn("Warning message", "key", "value")
 logger.LogError("Error message", "key", "value")
 
-// Context-aware logging
+// Context-aware logging (legacy — extracts trace_id from ctx)
 logger.LogInfoWithContext(ctx, "Message", "key", "value")
+
+// Request-scoped logger via context (v4.2.0)
+child := logger.DefaultLogger().With("requestId", "abc")
+ctx = logger.NewContext(ctx, child)
+logger.LogErrorWithContext(ctx, "Failed", "reason", "timeout") // uses enriched logger
+logger.FromContext(ctx).LogInfo("Also works")                  // retrieve directly
 
 // Child loggers with pre-set fields (v4.1.0)
 reqLogger := logger.With("request_id", "abc-123")
@@ -1260,9 +1284,9 @@ The middleware logs key request details (method, path, status, duration) in the 
 ### Context-Aware Logging
 
 ```
-2025-11-12 10:04:14 INFO Processing request {
-  "trace_id": "abc123def456",
-  "step": 1
+2025-11-12 10:04:14 ERROR Failed {
+  "requestId": "abc",
+  "reason": "timeout"
 }
 ```
 
@@ -1296,7 +1320,15 @@ The middleware logs key request details (method, path, status, duration) in the 
 
 ### Context-Aware Functions
 
-- `LogInfoWithContext(context.Context, string, ...any)` — Info with context
+- `NewContext(context.Context, Logger) context.Context` — Store a Logger in context
+- `FromContext(context.Context) Logger` — Retrieve Logger from context (falls back to `DefaultLogger()`)
+- `LogWithContext(context.Context, LogLevel, string, ...any)` — Log at any level via context logger
+- `LogDebugWithContext(context.Context, string, ...any)` — Debug via context logger
+- `LogTraceWithContext(context.Context, string, ...any)` — Trace via context logger
+- `LogNoticeWithContext(context.Context, string, ...any)` — Notice via context logger
+- `LogWarnWithContext(context.Context, string, ...any)` — Warn via context logger
+- `LogErrorWithContext(context.Context, string, ...any)` — Error via context logger
+- `LogInfoWithContext(context.Context, string, ...any)` — Info with legacy trace_id extraction (deprecated)
 
 ### HTTP Request Logging
 
@@ -1325,7 +1357,7 @@ The middleware logs key request details (method, path, status, duration) in the 
 
 - `LogLevel` — Trace, Debug, Info, Notice, Warn, Error, Audit constants
 - `Config` — Logger configuration struct
-- `Logger` — Interface for dependency injection (includes `With`, `LogErrorWithStack`)
+- `Logger` — Interface for dependency injection (includes `With`, `LogErrorWithStack`, `Log*WithContext`)
 
 ## Performance
 

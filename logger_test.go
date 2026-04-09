@@ -338,3 +338,113 @@ func TestLoggerInterface(t *testing.T) {
 		t.Error("Logger interface should work")
 	}
 }
+
+// Test NewContext / FromContext
+
+func TestNewContextFromContext(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetConfig(Config{
+		Output:      buf,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+
+	child := DefaultLogger().With("requestId", "abc")
+	ctx := NewContext(context.Background(), child)
+
+	l := FromContext(ctx)
+	l.LogInfo("context logger test")
+
+	output := buf.String()
+	if !strings.Contains(output, "abc") {
+		t.Error("Expected requestId 'abc' in output, got: " + output)
+	}
+	if !strings.Contains(output, "context logger test") {
+		t.Error("Expected message in output")
+	}
+}
+
+func TestFromContext_NilFallback(t *testing.T) {
+	l := FromContext(context.Background())
+	if l == nil {
+		t.Fatal("FromContext must never return nil")
+	}
+	// Should be a *defaultLoggerImpl (DefaultLogger)
+	if _, ok := l.(*defaultLoggerImpl); !ok {
+		t.Errorf("Expected *defaultLoggerImpl, got %T", l)
+	}
+}
+
+func TestLogErrorWithContext(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetConfig(Config{
+		Output:      buf,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+
+	child := DefaultLogger().With("requestId", "err-req-1")
+	ctx := NewContext(context.Background(), child)
+
+	LogErrorWithContext(ctx, "something broke", "detail", "oops")
+
+	output := buf.String()
+	if !strings.Contains(output, "err-req-1") {
+		t.Error("Expected enriched requestId in error log, got: " + output)
+	}
+	if !strings.Contains(output, "something broke") {
+		t.Error("Expected message in output")
+	}
+	if !strings.Contains(output, "oops") {
+		t.Error("Expected detail in output")
+	}
+}
+
+func TestLogInfoWithContext_BackwardCompat(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetConfig(Config{
+		Output:      buf,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+
+	ctx := context.WithValue(context.Background(), TraceIDContextKey, "trace-compat-99")
+	LogInfoWithContext(ctx, "compat check")
+
+	output := buf.String()
+	if !strings.Contains(output, "trace-compat-99") {
+		t.Error("Expected trace_id from TraceIDContextKey, got: " + output)
+	}
+}
+
+func TestContextLoggerConcurrent(t *testing.T) {
+	buf := &bytes.Buffer{}
+	SetConfig(Config{
+		Output:      buf,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+
+	base := context.Background()
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			child := DefaultLogger().With("goroutine", id)
+			ctx := NewContext(base, child)
+			l := FromContext(ctx)
+			l.LogInfo("concurrent context log", "id", id)
+		}(i)
+	}
+	wg.Wait()
+
+	output := buf.String()
+	if len(output) == 0 {
+		t.Error("No output from concurrent context logging")
+	}
+}

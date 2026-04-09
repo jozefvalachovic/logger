@@ -52,6 +52,9 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 			// Add to context
 			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
 			ctx = context.WithValue(ctx, RequestStartKey, start)
+			// Store an enriched logger so downstream handlers can use logger.FromContext(ctx)
+			child := logger.DefaultLogger().With("requestId", requestID)
+			ctx = logger.NewContext(ctx, child)
 			r = r.WithContext(ctx)
 		}
 
