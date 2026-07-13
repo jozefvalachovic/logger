@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,24 +21,26 @@ type dedupEntry struct {
 	firstSeen time.Time
 }
 
-var dedupMgr *dedupManager
+// dedupMgr holds the active dedup manager (nil when EnableDedup is false).
+// Accessed atomically so the log path can read it without locking.
+var dedupMgr atomic.Pointer[dedupManager]
 
 func startDedup(window time.Duration) {
-	if dedupMgr != nil {
-		dedupMgr.Stop()
+	if old := dedupMgr.Load(); old != nil {
+		old.Stop()
 	}
-	dedupMgr = &dedupManager{
+	dm := &dedupManager{
 		entries: make(map[string]*dedupEntry),
 		window:  window,
 		stopCh:  make(chan struct{}),
 	}
-	go dedupMgr.cleanup()
+	dedupMgr.Store(dm)
+	go dm.cleanup()
 }
 
 func stopDedup() {
-	if dedupMgr != nil {
-		dedupMgr.Stop()
-		dedupMgr = nil
+	if old := dedupMgr.Swap(nil); old != nil {
+		old.Stop()
 	}
 }
 

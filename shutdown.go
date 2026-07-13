@@ -24,17 +24,16 @@ func Shutdown(ctx context.Context) error {
 	}
 
 	// Flush dedup summaries
-	if dedupMgr != nil {
-		dedupMgr.Flush()
-		dedupMgr.Stop()
-		dedupMgr = nil
+	if dm := dedupMgr.Swap(nil); dm != nil {
+		dm.Flush()
+		dm.Stop()
 	}
 
 	// Close audit logger with context deadline awareness
-	if auditLogger != nil {
+	if al := auditLogger.Swap(nil); al != nil {
 		auditDone := make(chan error, 1)
 		go func() {
-			auditDone <- auditLogger.Close()
+			auditDone <- al.Close()
 		}()
 
 		select {
@@ -45,7 +44,6 @@ func Shutdown(ctx context.Context) error {
 		case <-ctx.Done():
 			errs = append(errs, ctx.Err())
 		}
-		auditLogger = nil
 	}
 
 	return errors.Join(errs...)

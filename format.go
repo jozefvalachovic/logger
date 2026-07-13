@@ -53,7 +53,7 @@ func formatString(text string, c color, bold bool) string {
 	case cyan:
 		colorCode += "\033[36m"
 	case green:
-		colorCode += "\033[032m"
+		colorCode += "\033[32m"
 	case purple:
 		colorCode += "\033[35m"
 	case red:

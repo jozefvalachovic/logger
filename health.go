@@ -27,8 +27,8 @@ func HealthCheck() error {
 		}
 	}
 
-	if auditLogger != nil {
-		stats := auditLogger.GetStats()
+	if al := auditLogger.Load(); al != nil {
+		stats := al.GetStats()
 		if stats.Closed {
 			errs = append(errs, fmt.Errorf("health: audit logger is closed"))
 		}

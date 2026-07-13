@@ -379,20 +379,20 @@ func SetConfig(cfg Config) {
 	}
 
 	// Handle metrics changes
-	if cfg.EnableMetrics && metrics == nil {
-		metrics = NewLogMetrics()
-	} else if !cfg.EnableMetrics && metrics != nil {
-		metrics = nil
+	if cfg.EnableMetrics && metrics.Load() == nil {
+		metrics.Store(NewLogMetrics())
+	} else if !cfg.EnableMetrics && metrics.Load() != nil {
+		metrics.Store(nil)
 	}
 
 	// Handle dedup changes
-	if cfg.EnableDedup && dedupMgr == nil {
+	if cfg.EnableDedup && dedupMgr.Load() == nil {
 		window := cfg.DedupWindow
 		if window == 0 {
 			window = 5 * time.Second
 		}
 		startDedup(window)
-	} else if !cfg.EnableDedup && dedupMgr != nil {
+	} else if !cfg.EnableDedup && dedupMgr.Load() != nil {
 		stopDedup()
 	}
 
@@ -402,20 +402,22 @@ func SetConfig(cfg Config) {
 		if al, err := audit.New(*cfg.Audit); err != nil {
 			LogError("Failed to initialize enterprise audit logger", "__error", err)
 		} else {
-			auditLogger = al
+			auditLogger.Store(al)
 		}
-	} else if cfg.Audit == nil && auditLogger != nil {
+	} else if cfg.Audit == nil && auditLogger.Load() != nil {
 		// Close existing audit logger
-		_ = auditLogger.Close()
-		auditLogger = nil
-	} else if cfg.Audit != nil && auditLogger != nil {
+		if al := auditLogger.Swap(nil); al != nil {
+			_ = al.Close()
+		}
+	} else if cfg.Audit != nil && auditLogger.Load() != nil {
 		// Reconfigure: close old and create new
-		_ = auditLogger.Close()
+		if old := auditLogger.Swap(nil); old != nil {
+			_ = old.Close()
+		}
 		if al, err := audit.New(*cfg.Audit); err != nil {
 			LogError("Failed to reinitialize enterprise audit logger", "__error", err)
-			auditLogger = nil
 		} else {
-			auditLogger = al
+			auditLogger.Store(al)
 		}
 	}
 
@@ -481,8 +483,8 @@ func LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
 	cfg := *globalConfig.Load()
 
 	// If enterprise audit is configured, use it
-	if cfg.Audit != nil && auditLogger != nil {
-		return auditLogger.Log(ctx, event)
+	if al := auditLogger.Load(); cfg.Audit != nil && al != nil {
+		return al.Log(ctx, event)
 	}
 
 	// Fallback to legacy behavior: convert event to key-value pairs
@@ -524,8 +526,8 @@ func LogAuditEvent(ctx context.Context, event audit.AuditEvent) error {
 func LogAuditEventSync(ctx context.Context, event audit.AuditEvent) error {
 	cfg := *globalConfig.Load()
 
-	if cfg.Audit != nil && auditLogger != nil {
-		return auditLogger.LogSync(ctx, event)
+	if al := auditLogger.Load(); cfg.Audit != nil && al != nil {
+		return al.LogSync(ctx, event)
 	}
 
 	// Fallback to regular async logging
@@ -535,7 +537,7 @@ func LogAuditEventSync(ctx context.Context, event audit.AuditEvent) error {
 // GetAuditLogger returns the enterprise audit logger instance
 // Returns nil if enterprise audit is not configured
 func GetAuditLogger() *audit.Logger {
-	return auditLogger
+	return auditLogger.Load()
 }
 
 // TraceIDKey is the typed context key for trace ID extraction.
@@ -549,17 +551,12 @@ var TraceIDContextKey = traceIDKeyType{}
 
 // Deprecated: LogInfoWithContext extracts trace_id from ctx for backward compatibility.
 // Prefer storing an enriched logger via NewContext and using LogWithContext / FromContext instead.
+//
+// The trace ID must be stored using the typed [TraceIDContextKey]; untyped string
+// context keys are not supported.
 func LogInfoWithContext(ctx context.Context, message string, keyValues ...any) {
-	// Extract trace ID from context using the typed key first, then fall back to string key
-	var traceID any
-
-	if val := ctx.Value(TraceIDContextKey); val != nil {
-		traceID = val
-	} else if val := ctx.Value("trace_id"); val != nil {
-		traceID = val
-	}
-
-	if traceID != nil {
+	// Extract trace ID from context using the typed key only.
+	if traceID := ctx.Value(TraceIDContextKey); traceID != nil {
 		keyValues = append(keyValues, "trace_id", traceID)
 	}
 	logInternal(Info, message, keyValues...)

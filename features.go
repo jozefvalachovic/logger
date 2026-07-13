@@ -99,7 +99,13 @@ func levelToString(level LogLevel) string {
 	}
 }
 
-// shouldSample determines if a log message should be logged based on sampling rate
+// shouldSample determines if a log message should be logged based on sampling rate.
+//
+// Sampling is deterministic and keyed on the message content (hashed with the
+// configured seed): a given message is always either kept or dropped for a
+// fixed rate/seed, rather than being decided randomly per call. This keeps
+// sampling stable and reproducible, but means identical messages are never
+// partially sampled relative to each other.
 func shouldSample(msg string, rate float64, seed int64) bool {
 	if rate >= 1.0 {
 		return true
@@ -366,10 +372,11 @@ func (w *RotatingWriter) Close() error {
 
 // GetMetrics returns the current logger metrics
 func GetMetrics() map[string]any {
-	if metrics == nil {
+	m := metrics.Load()
+	if m == nil {
 		return map[string]any{}
 	}
-	return metrics.GetMetrics()
+	return m.GetMetrics()
 }
 
 // MetricsHandler returns an http.Handler that serves metrics in Prometheus exposition format.
@@ -378,12 +385,13 @@ func MetricsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
-		if metrics == nil {
+		mc := metrics.Load()
+		if mc == nil {
 			_, _ = fmt.Fprintln(w, "# No metrics collected (EnableMetrics is false)")
 			return
 		}
 
-		m := metrics.GetMetrics()
+		m := mc.GetMetrics()
 
 		prefix := globalConfig.Load().MetricsPrefix
 		if prefix == "" {

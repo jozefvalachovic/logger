@@ -448,3 +448,60 @@ func TestContextLoggerConcurrent(t *testing.T) {
 		t.Error("No output from concurrent context logging")
 	}
 }
+
+// TestConcurrentSetConfigAndLogging exercises SetConfig running concurrently
+// with active logging from many goroutines. Before the global logger state was
+// made atomic, this raced on defaultLogger/metrics/auditLogger/dedupMgr and was
+// only caught under `go test -race`.
+func TestConcurrentSetConfigAndLogging(t *testing.T) {
+	SetConfig(Config{
+		Output:      io.Discard,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+
+	var wg sync.WaitGroup
+
+	// Writers: continuously log while config is being swapped.
+	for i := range 50 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := range 200 {
+				LogInfo("concurrent event", "goroutine", id, "iter", j)
+				LogError("concurrent error", "goroutine", id)
+				GetMetrics()
+				_ = HealthCheck()
+			}
+		}(i)
+	}
+
+	// Reconfigurers: repeatedly toggle metrics, dedup and level.
+	for i := range 5 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := range 40 {
+				SetConfig(Config{
+					Output:        io.Discard,
+					Level:         LevelInfo,
+					EnableColor:   false,
+					TimeFormat:    "15:04:05",
+					EnableMetrics: j%2 == 0,
+					EnableDedup:   j%2 == 1,
+				})
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Restore a clean default config for subsequent tests.
+	SetConfig(Config{
+		Output:      io.Discard,
+		Level:       LevelInfo,
+		EnableColor: false,
+		TimeFormat:  "15:04:05",
+	})
+}

@@ -18,7 +18,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🚀 **High performance** — Lock-free config reads via `atomic.Pointer[Config]`, efficient memory allocation
 - ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
 - 🔢 **Atomic metrics counters** — `DefaultMetricsCollector` uses `atomic.Int64`, mutex only for map fields
-- 🎲 **Log Sampling** — Reduce log volume by sampling a percentage of messages
+- 🎲 **Log Sampling** — Reduce log volume by deterministically sampling based on message content
 - 🔇 **Log Deduplication** — Suppress repeated messages within a configurable time window
 - 🔄 **Log Rotation** — Automatic log file rotation based on size or age
 - 📈 **Metrics** — Built-in log metrics collection and Prometheus text exposition endpoint
@@ -864,23 +864,26 @@ The pretty handler is always included. Additional handlers receive the same log 
 
 ### Log Sampling
 
-Reduce log volume by logging only a percentage of messages. Useful for high-traffic applications where you need to sample logs without losing observability.
+Reduce log volume by sampling roughly a percentage of your distinct log messages. Useful for high-traffic applications where you need to cut volume without losing observability.
+
+> **Note:** Sampling is **deterministic and keyed on the message string** (hashed with `SampleSeed`), not decided randomly per call. A given message text is therefore *always* kept or *always* dropped for a fixed rate/seed. Vary the message text (not just the key-value fields) to sample across a population of events.
 
 ```go
 logger.SetConfig(logger.Config{
     Output:     os.Stdout,
-    SampleRate: 0.1,  // Log only 10% of messages
-    SampleSeed: 42,   // Optional: deterministic sampling with seed
+    SampleRate: 0.1,  // Keep ~10% of distinct message strings
+    SampleSeed: 42,   // Seed for the deterministic hash
 })
 
-// Only 10% of these messages will be logged
+// Whether each distinct message text is kept is decided by its hash,
+// so ~10% of the unique messages below are logged (all their repeats included).
 for i := 0; i < 1000; i++ {
-    logger.LogInfo("High volume event", "id", i)
+    logger.LogInfo(fmt.Sprintf("High volume event %d", i))
 }
 ```
 
 - **SampleRate**: Float between 0.0 and 1.0 (default: 1.0 = log everything)
-- **SampleSeed**: Optional seed for deterministic sampling
+- **SampleSeed**: Seed for the deterministic per-message hash
 
 ### Log Rotation
 

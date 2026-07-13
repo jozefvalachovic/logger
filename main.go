@@ -111,7 +111,10 @@ func (c *Config) Validate() error {
 
 // Global logger instance and configuration
 var (
-	defaultLogger *slog.Logger
+	// defaultLogger holds the active slog.Logger. It is swapped atomically by
+	// initLogger so that concurrent readers in the log path never observe a
+	// torn pointer while SetConfig reconfigures the logger.
+	defaultLogger atomic.Pointer[slog.Logger]
 	globalConfig  atomic.Pointer[Config]
 
 	// configWriteMu serialises SetConfig calls so that read-modify writes
@@ -125,11 +128,13 @@ var (
 	asyncMu      sync.Mutex
 	asyncWg      sync.WaitGroup // Tracks if async goroutine is running
 
-	// Metrics
-	metrics *LogMetrics
+	// Metrics (nil when EnableMetrics is false). Accessed atomically so the
+	// log path can read it without holding configWriteMu.
+	metrics atomic.Pointer[LogMetrics]
 
-	// Enterprise audit logger (nil when using legacy behavior)
-	auditLogger *audit.Logger
+	// Enterprise audit logger (nil when using legacy behavior). Accessed
+	// atomically so the log path can read it without holding configWriteMu.
+	auditLogger atomic.Pointer[audit.Logger]
 
 	defaultConfig = Config{
 		Output:        os.Stdout,
@@ -180,7 +185,7 @@ func initLogger() {
 		allHandlers = append(allHandlers, cfg.AdditionalHandlers...)
 		handler = slog.NewMultiHandler(allHandlers...)
 	}
-	defaultLogger = slog.New(handler)
+	defaultLogger.Store(slog.New(handler))
 
 	// Sync the stdlib log package level with our configured level
 	// so log.Print/log.Printf respect the same threshold (Go 1.26+).
@@ -202,15 +207,17 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 	}
 
 	// Apply deduplication
-	if cfg.EnableDedup && dedupMgr != nil {
-		if !dedupMgr.ShouldLog(level, message) {
+	if cfg.EnableDedup {
+		if dm := dedupMgr.Load(); dm != nil && !dm.ShouldLog(level, message) {
 			return
 		}
 	}
 
 	// Track metrics
-	if cfg.EnableMetrics && metrics != nil {
-		metrics.RecordLog(level)
+	if cfg.EnableMetrics {
+		if m := metrics.Load(); m != nil {
+			m.RecordLog(level)
+		}
 	}
 
 	// Capture caller PC for source attribution
@@ -267,7 +274,7 @@ func logInternalSync(level LogLevel, message string, pc uintptr, keyValues ...an
 	slogLevel := slogLevelFromLogLevel(level)
 	record := slog.NewRecord(time.Now(), slogLevel, message, pc)
 	record.AddAttrs(attrs...)
-	_ = defaultLogger.Handler().Handle(context.Background(), record)
+	_ = defaultLogger.Load().Handler().Handle(context.Background(), record)
 }
 
 // slogLevelFromLogLevel converts LogLevel to slog.Level
