@@ -416,6 +416,7 @@ func TestHTTPMiddlewareSkipPaths(t *testing.T) {
 		shouldLog bool
 	}{
 		{"/health", false},
+		{"/health?probe=gce", false},
 		{"/ready", false},
 		{"/metrics/cpu", false},
 		{"/api/users", true},

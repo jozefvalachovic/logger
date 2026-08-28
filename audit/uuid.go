@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	uuidCounter uint64
+	uuidCounter atomic.Uint64
 	machineID   string
 )
 
@@ -38,7 +38,7 @@ func getMachineID() string {
 // generateUUID generates a unique ID for audit entries
 func generateUUID() string {
 	now := time.Now()
-	counter := atomic.AddUint64(&uuidCounter, 1)
+	counter := uuidCounter.Add(1)
 
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

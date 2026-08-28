@@ -29,15 +29,16 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		// Check if path should be skipped
+		// Skip decision is based on the request path only (query string excluded),
+		// so endpoints like /health still skip correctly when probes add query params.
+		if shouldSkipPath(r.URL.Path, options) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		fullPath := r.URL.Path
 		if r.URL.RawQuery != "" {
 			fullPath = r.URL.Path + "?" + r.URL.RawQuery
-		}
-
-		if shouldSkipPath(fullPath, options) {
-			next.ServeHTTP(w, r)
-			return
 		}
 
 		// Handle Request ID

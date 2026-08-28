@@ -25,9 +25,11 @@ func main() {
 
 	// Apply logging middleware with options
 	// Using functional options pattern for configuration
+	// Skip common probe endpoints (k8s health checks) so they don't spam logs.
 	loggedMux := middleware.LogHTTPMiddleware(mux,
 		middleware.WithLogBodyOnErrors(true),
 		middleware.WithRequestID(true),
+		middleware.WithSkipPaths("/health", "/healthcheck", "/ready", "/live"),
 	)
 
 	// Start server

@@ -5,6 +5,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 ## Features
 
 ### Core
+
 - 🌈 **Colorized log levels** — Trace, Debug, Info, Notice, Warn, Error, Audit with automatic color coding
 - 📊 **Structured logging** — Key-value pairs with JSON-like output
 - 🏗️ **Complex data structures** — Structs, arrays, maps, nested objects with JSON tag support
@@ -15,6 +16,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🌍 **Environment-Aware Defaults** — `ConfigFromEnv()` reads `LOG_LEVEL`, `LOG_COLOR`, `LOG_CALLER`, etc.
 
 ### Performance & Reliability
+
 - 🚀 **High performance** — Lock-free config reads via `atomic.Pointer[Config]`, efficient memory allocation
 - ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
 - 🔢 **Atomic metrics counters** — `DefaultMetricsCollector` uses `atomic.Int64`, mutex only for map fields
@@ -26,6 +28,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🛑 **Graceful Shutdown** — `Shutdown()` drains async buffers, flushes dedup, and closes audit (context-deadline aware)
 
 ### Logging API
+
 - 👶 **Child Loggers** — `With()` creates loggers with pre-set fields for request/module scoping
 - 📍 **Caller Attribution** — Automatic `[file:line]` source location in log output
 - 🪵 **Error Logging with Stack** — `LogErrorWithStack()` captures error type, chain, and stack trace
@@ -34,6 +37,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 📡 **stdlib log level sync** — `slog.SetLogLoggerLevel` keeps the stdlib `log` package in sync
 
 ### Middleware
+
 - 🌐 **HTTP middleware** — Clean request logging with panic recovery and colorized status codes
 - 🔄 **Context support** — Request-scoped loggers via `NewContext` / `FromContext` with full level coverage
 - 📡 **gRPC Interceptor Helpers** — Zero-dependency `LogGRPCUnary` / `LogGRPCStream` wrappers
@@ -43,6 +47,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🎚️ **Level Filtering** — `LevelFilterHandler` sets per-handler minimum log levels
 
 ### Enterprise Audit
+
 - 🔐 **Tamper Detection** — SHA-256/512 hash chain with constant-time verification (`crypto/subtle`)
 - 🧹 **Key material cleanup** — Signing keys zeroed on close for defense in depth
 - ✍️ **Ed25519 Signing** — Cryptographic signatures on audit entries for non-repudiation
@@ -140,6 +145,8 @@ func main() {
     loggedMux := middleware.LogHTTPMiddleware(mux,
         middleware.WithLogBodyOnErrors(true),
         middleware.WithRequestID(true),
+        // Skip k8s/lb probe endpoints so they don't spam logs
+        middleware.WithSkipPaths("/health", "/healthcheck", "/ready", "/live"),
     )
     http.ListenAndServe(":8080", loggedMux)
 }
@@ -866,7 +873,7 @@ The pretty handler is always included. Additional handlers receive the same log 
 
 Reduce log volume by sampling roughly a percentage of your distinct log messages. Useful for high-traffic applications where you need to cut volume without losing observability.
 
-> **Note:** Sampling is **deterministic and keyed on the message string** (hashed with `SampleSeed`), not decided randomly per call. A given message text is therefore *always* kept or *always* dropped for a fixed rate/seed. Vary the message text (not just the key-value fields) to sample across a population of events.
+> **Note:** Sampling is **deterministic and keyed on the message string** (hashed with `SampleSeed`), not decided randomly per call. A given message text is therefore _always_ kept or _always_ dropped for a fixed rate/seed. Vary the message text (not just the key-value fields) to sample across a population of events.
 
 ```go
 logger.SetConfig(logger.Config{
