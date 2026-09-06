@@ -109,14 +109,16 @@ func isSensitiveKey(key string, redactKeys []string) bool {
 			return true
 		}
 	}
-	return false
-}
-
-func redactValueIfNeeded(key string, value any, cfg Config) any {
-	if isSensitiveKey(key, cfg.RedactKeys) {
-		return cfg.RedactMask
+	// Namespaced keys such as "body.password" must match on their final segment.
+	if i := strings.LastIndexByte(key, '.'); i >= 0 {
+		segment := key[i+1:]
+		for _, k := range redactKeys {
+			if strings.EqualFold(k, segment) {
+				return true
+			}
+		}
 	}
-	return value
+	return false
 }
 
 // FormatStatusCode returns the formatted status code and the appropriate log level (exported for middleware)

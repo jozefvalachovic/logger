@@ -170,21 +170,15 @@ func init() {
 func initLogger() {
 	cfg := *globalConfig.Load()
 
-	opts := prettyHandlerOptions{
-		SlogOpts: slog.HandlerOptions{
-			Level:     cfg.Level,
-			AddSource: cfg.EnableCaller,
-		},
-		Config: cfg,
-	}
-
-	var handler slog.Handler = newPrettyHandler(cfg.Output, opts)
+	var handler slog.Handler = newPrettyHandler(cfg.Output, cfg)
 	if len(cfg.AdditionalHandlers) > 0 {
 		allHandlers := make([]slog.Handler, 0, len(cfg.AdditionalHandlers)+1)
 		allHandlers = append(allHandlers, handler)
 		allHandlers = append(allHandlers, cfg.AdditionalHandlers...)
 		handler = slog.NewMultiHandler(allHandlers...)
 	}
+	// Redaction wraps the whole fan-out so additional handlers never see secrets.
+	handler = newRedactHandler(handler, cfg, compileRedactPatterns(cfg.RedactPatterns))
 	defaultLogger.Store(slog.New(handler))
 
 	// Sync the stdlib log package level with our configured level
@@ -252,8 +246,6 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 
 // logInternalSync performs synchronous logging (used by both sync and async paths)
 func logInternalSync(level LogLevel, message string, pc uintptr, keyValues ...any) {
-	cfg := *globalConfig.Load()
-
 	if len(keyValues)%2 != 0 {
 		// Handle odd number of arguments
 		keyValues = append(keyValues, "MISSING_VALUE")
@@ -264,7 +256,6 @@ func logInternalSync(level LogLevel, message string, pc uintptr, keyValues ...an
 		if i+1 < len(keyValues) {
 			key := fmt.Sprintf("%v", keyValues[i])
 			value := keyValues[i+1]
-			value = redactValueIfNeeded(key, value, cfg)
 
 			// Use the new convertToSlogAttr function for all types
 			attrs = append(attrs, convertToSlogAttr(key, value))

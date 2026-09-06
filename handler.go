@@ -10,21 +10,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"time"
 )
 
 // prettyHandler is a custom slog.Handler that formats log records in a human-readable way
 type prettyHandler struct {
-	slog.Handler
-	logger         *log.Logger
-	config         Config
-	redactPatterns []*regexp.Regexp
-}
-
-// prettyHandlerOptions holds configuration options for the prettyHandler
-type prettyHandlerOptions struct {
-	SlogOpts slog.HandlerOptions
-	Config   Config
+	logger *log.Logger
+	config Config
+	attrs  []slog.Attr
+	groups []string
 }
 
 const (
@@ -93,34 +88,18 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 		}
 	}
 
-	recordAttrs := record.NumAttrs()
-
-	fields := make(map[string]any, recordAttrs)
+	recordAttrs := make([]slog.Attr, 0, record.NumAttrs())
 	record.Attrs(func(a slog.Attr) bool {
-		if a.Key == "duration" {
-			if duration, ok := a.Value.Any().(time.Duration); ok {
-				fields[a.Key] = fmt.Sprintf("%.9fs", duration.Seconds())
-			} else {
-				fields[a.Key] = a.Value.Any()
-			}
-		} else {
-			val := a.Value.Any()
-			// Apply regex redaction to string values
-			if s, ok := val.(string); ok {
-				for _, re := range handler.redactPatterns {
-					if re.MatchString(s) {
-						val = handler.config.RedactMask
-						break
-					}
-				}
-			}
-			fields[a.Key] = val
-		}
+		recordAttrs = append(recordAttrs, a)
 		return true
 	})
 
+	fields := make(map[string]any, len(handler.attrs)+len(recordAttrs))
+	mergeAttrsInto(fields, handler.attrs)
+	mergeAttrsInto(fields, wrapGroups(handler.groups, recordAttrs))
+
 	var jsonStr string
-	if recordAttrs > 0 {
+	if len(fields) > 0 {
 		if handler.config.CompactJSON {
 			jsonData, err := json.Marshal(fields)
 			if err != nil {
@@ -148,7 +127,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 		parts = append(parts, "["+caller+"]")
 	}
 	if record.Message == "" {
-		if recordAttrs > 0 {
+		if jsonStr != "" {
 			parts = append(parts, jsonStr)
 		}
 	} else {
@@ -157,7 +136,7 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 			msg = formatString(record.Message, cyan, false)
 		}
 		parts = append(parts, msg)
-		if recordAttrs > 0 {
+		if jsonStr != "" {
 			parts = append(parts, jsonStr)
 		}
 	}
@@ -165,6 +144,87 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 	handler.logger.Println(parts...)
 
 	return nil
+}
+
+func (handler *prettyHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= handler.config.Level
+}
+
+func (handler *prettyHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return handler
+	}
+	next := handler.clone()
+	next.attrs = append(next.attrs, wrapGroups(handler.groups, attrs)...)
+	return next
+}
+
+func (handler *prettyHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return handler
+	}
+	next := handler.clone()
+	next.groups = append(next.groups, name)
+	return next
+}
+
+// clone clips the copied slices so sibling handlers never share a backing array.
+func (handler *prettyHandler) clone() *prettyHandler {
+	return &prettyHandler{
+		logger: handler.logger,
+		config: handler.config,
+		attrs:  slices.Clip(slices.Clone(handler.attrs)),
+		groups: slices.Clip(slices.Clone(handler.groups)),
+	}
+}
+
+// wrapGroups nests attrs under the open group chain, outermost group first.
+func wrapGroups(groups []string, attrs []slog.Attr) []slog.Attr {
+	if len(attrs) == 0 {
+		return nil
+	}
+	for _, group := range slices.Backward(groups) {
+		attrs = []slog.Attr{{Key: group, Value: slog.GroupValue(attrs...)}}
+	}
+	return attrs
+}
+
+// mergeAttrsInto flattens attrs into dst, resolving LogValuers and nesting groups.
+func mergeAttrsInto(dst map[string]any, attrs []slog.Attr) {
+	for _, a := range attrs {
+		value := a.Value.Resolve()
+
+		if value.Kind() == slog.KindGroup {
+			group := value.Group()
+			if len(group) == 0 {
+				continue
+			}
+			if a.Key == "" {
+				mergeAttrsInto(dst, group)
+				continue
+			}
+			sub, ok := dst[a.Key].(map[string]any)
+			if !ok {
+				sub = make(map[string]any, len(group))
+				dst[a.Key] = sub
+			}
+			mergeAttrsInto(sub, group)
+			continue
+		}
+
+		if a.Key == "" {
+			continue
+		}
+
+		if a.Key == "duration" {
+			if duration, ok := value.Any().(time.Duration); ok {
+				dst[a.Key] = fmt.Sprintf("%.9fs", duration.Seconds())
+				continue
+			}
+		}
+
+		dst[a.Key] = value.Any()
+	}
 }
 
 var jsonKeyColorRe = regexp.MustCompile(`("(?:[^"\\]|\\.)*")\s*:`)
@@ -184,16 +244,9 @@ func colorizeJSONOutput(jsonStr string) string {
 }
 
 // newPrettyHandler creates a new instance of prettyHandler with the given output and options
-func newPrettyHandler(out io.Writer, opts prettyHandlerOptions) *prettyHandler {
-	h := &prettyHandler{
-		Handler: slog.NewJSONHandler(out, &opts.SlogOpts),
-		logger:  log.New(out, "", 0),
-		config:  opts.Config,
+func newPrettyHandler(out io.Writer, cfg Config) *prettyHandler {
+	return &prettyHandler{
+		logger: log.New(out, "", 0),
+		config: cfg,
 	}
-	for _, pattern := range opts.Config.RedactPatterns {
-		if re, err := regexp.Compile(pattern); err == nil {
-			h.redactPatterns = append(h.redactPatterns, re)
-		}
-	}
-	return h
 }

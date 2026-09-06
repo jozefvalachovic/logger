@@ -35,6 +35,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - 🔏 **Regex Redaction** — Pattern-based value redaction (emails, credit cards, etc.)
 - 🔐 **Audit logging** — Dedicated audit log level for security and compliance events
 - 📡 **stdlib log level sync** — `slog.SetLogLoggerLevel` keeps the stdlib `log` package in sync
+- 🔌 **`*slog.Logger` interop** — `Slog()` hands dependencies a standard `*slog.Logger` backed by this pipeline
 
 ### Middleware
 
@@ -865,7 +866,27 @@ logger.SetConfig(logger.Config{
 })
 ```
 
-The pretty handler is always included. Additional handlers receive the same log records.
+The pretty handler is always included. Additional handlers receive the same log records, already redacted.
+
+### Standard `*slog.Logger` Interop
+
+Some dependencies accept only a `*slog.Logger`. `Slog()` returns one that writes through this pipeline:
+
+```go
+srv := somepkg.New(somepkg.Options{
+    Logger: logger.Slog(), // pretty output, rotation, redaction, additional handlers
+})
+```
+
+The returned logger resolves the active handler on **every** record, so it keeps working after a `SetConfig()` call and is safe to capture once at startup. `With()` and `WithGroup()` chains are replayed onto the new handler.
+
+Records written through it get the configured level, output and rotation, `AdditionalHandlers`, and both key and pattern redaction. Sampling, deduplication, metrics, and async buffering are applied by the `Log*` functions and do **not** apply to this path.
+
+To also cover dependencies that reach for `slog.Default()`:
+
+```go
+logger.SetAsSlogDefault() // opt-in; reassigns a process-wide global
+```
 
 ## Advanced Features (v4.0+)
 
@@ -1371,6 +1392,11 @@ The middleware logs key request details (method, path, status, duration) in the 
 - `NewOTelBridgeHandler(slog.Handler, serviceName, version) *OTelBridgeHandler` — OTel level mapping
 - `NewLevelFilterHandler(slog.Level, slog.Handler) *LevelFilterHandler` — Per-handler min level
 
+### slog Interop
+
+- `Slog() *slog.Logger` — Standard `*slog.Logger` backed by this pipeline
+- `SetAsSlogDefault()` — Routes `slog.Default()` through this pipeline
+
 ### Metrics
 
 - `MetricsHandler() http.Handler` — Prometheus text exposition endpoint
@@ -1478,6 +1504,14 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
     middleware.WithRequestID(true),
 )
 ```
+
+### v4.3.0 Changes
+
+- **`Slog()`** — Returns a standard `*slog.Logger` backed by this pipeline, for dependencies that only accept `*slog.Logger`
+- **`SetAsSlogDefault()`** — Opt-in; routes `slog.Default()` through the pipeline
+- **Redaction moved above the fan-out** — `RedactKeys` and `RedactPatterns` now apply to every destination, including `AdditionalHandlers`, and resolve `slog.LogValuer` values and nested `slog.Group` attributes
+- **Namespaced key redaction** _(behavior change)_ — `RedactKeys` now also matches the final dotted segment, so HTTP body fields such as `body.password` are redacted; values that were printed in the clear before are now masked
+- **Pretty handler completeness** — `Enabled`, `WithAttrs`, and `WithGroup` are implemented directly, so `With()` / `WithGroup()` chains keep pretty formatting, colors, caller attribution, and redaction, and nested groups render as nested JSON
 
 ### v4.1.0 Changes
 
