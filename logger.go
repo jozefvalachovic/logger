@@ -431,6 +431,20 @@ func GetConfig() Config {
 	return *globalConfig.Load()
 }
 
+// SetLevel changes only the minimum log level. Unlike a GetConfig/SetConfig
+// round-trip, it leaves async, dedup, metrics and the audit logger untouched,
+// and LevelInfo (0) is honored rather than treated as unset.
+func SetLevel(level slog.Level) {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
+
+	cfg := *globalConfig.Load()
+	cfg.Level = level
+	cfg.LevelSet = true
+	globalConfig.Store(&cfg)
+	initLogger()
+}
+
 // Basic Log function
 
 // Log logs a message at the specified log level with optional key-value pairs (backwards compatible version)

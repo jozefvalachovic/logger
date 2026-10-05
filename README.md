@@ -581,9 +581,19 @@ cfg := logger.ConfigFromEnv()
 logger.SetConfig(cfg)
 ```
 
+An unknown `LOG_LEVEL` value falls back to `info` silently. To validate a level yourself and apply it without a full reconfigure:
+
+```go
+level, err := logger.ParseLevel(os.Getenv("LOG_LEVEL"))
+if err != nil {
+    return err
+}
+logger.SetLevel(level) // also correct for LevelInfo (0), unlike Config.Level without LevelSet
+```
+
 | Variable          | Values                                         | Default    |
 | ----------------- | ---------------------------------------------- | ---------- |
-| `LOG_LEVEL`       | trace, debug, info, notice, warn, error, audit | info       |
+| `LOG_LEVEL`       | trace, debug, info, notice, warn, error, audit | trace      |
 | `LOG_COLOR`       | true, false, 1, 0                              | false      |
 | `LOG_CALLER`      | true, false, 1, 0                              | false      |
 | `LOG_FORMAT`      | compact, json                                  | (indented) |
@@ -887,6 +897,17 @@ To also cover dependencies that reach for `slog.Default()`:
 ```go
 logger.SetAsSlogDefault() // opt-in; reassigns a process-wide global
 ```
+
+For APIs that take a stdlib `*log.Logger`, such as `http.Server.ErrorLog`:
+
+```go
+srv := &http.Server{
+    Addr:     ":8443",
+    ErrorLog: logger.StdLogger(slog.LevelError),
+}
+```
+
+Like `Slog()`, this path skips sampling and deduplication. Deduplication would not help with lines such as `http: TLS handshake error from <addr>:<port>` anyway, because they match on exact message text and each line is unique.
 
 ## Advanced Features (v4.0+)
 
@@ -1339,6 +1360,8 @@ The middleware logs key request details (method, path, status, duration) in the 
 
 - `SetConfig(Config)` — Configure logger settings (output, level, colors, time format)
 - `GetConfig() Config` — Get current configuration
+- `SetLevel(slog.Level)` — Change only the minimum level; leaves async, dedup, metrics and audit untouched
+- `ParseLevel(string) (slog.Level, error)` — Parse a level name; errors on unknown names
 - `ConfigFromEnv() Config` — Config populated from environment variables
 - `Shutdown(context.Context) error` — Graceful shutdown: drain buffers, flush, close
 - `HealthCheck() error` — Verify logger subsystem health
@@ -1396,6 +1419,7 @@ The middleware logs key request details (method, path, status, duration) in the 
 
 - `Slog() *slog.Logger` — Standard `*slog.Logger` backed by this pipeline
 - `SetAsSlogDefault()` — Routes `slog.Default()` through this pipeline
+- `StdLogger(slog.Level) *log.Logger` — Stdlib `*log.Logger` (e.g. `http.Server.ErrorLog`) backed by this pipeline
 
 ### Metrics
 
@@ -1504,6 +1528,13 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
     middleware.WithRequestID(true),
 )
 ```
+
+### v4.4.0 Changes
+
+- **`ParseLevel()`** — Exported level-name parser that returns an error for unknown names; `LOG_LEVEL` parsing keeps its lenient `info` fallback
+- **`SetLevel()`** — Changes only the level. Prefer it over a `GetConfig`/`SetConfig` round-trip, which treats `LevelInfo` as unset without `LevelSet` and recreates the audit logger when `Audit` is configured
+- **`StdLogger()`** — `*log.Logger` backed by `Slog()`, for `http.Server.ErrorLog` and similar. Sampling, deduplication, metrics and async buffering do not apply
+- **Docs** — `LOG_LEVEL` default corrected to `trace`
 
 ### v4.3.0 Changes
 

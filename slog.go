@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"log"
 	"log/slog"
 	"os"
 	"slices"
@@ -78,6 +79,14 @@ func (h *forwardHandler) clonedOps() []forwardOp {
 // and do NOT apply to this path.
 func Slog() *slog.Logger {
 	return slog.New(&forwardHandler{})
+}
+
+// StdLogger returns a *log.Logger that writes each line through Slog() at the
+// given level, e.g. for http.Server.ErrorLog. Lines below the configured level
+// are dropped. As with Slog(), sampling, deduplication, metrics and async
+// buffering do not apply, so a flood of distinct lines is logged one by one.
+func StdLogger(level slog.Level) *log.Logger {
+	return slog.NewLogLogger(Slog().Handler(), level)
 }
 
 // SetAsSlogDefault routes log/slog's package-level default through this

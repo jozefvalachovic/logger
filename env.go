@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -45,25 +46,33 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
-func parseLevelString(s string) slog.Level {
+// ParseLevel converts a level name (trace, debug, info, notice, warn, warning,
+// error, audit; case-insensitive) to its slog.Level and reports unknown names.
+func ParseLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "trace":
-		return LevelTrace
+		return LevelTrace, nil
 	case "debug":
-		return slog.LevelDebug
+		return slog.LevelDebug, nil
 	case "info":
-		return slog.LevelInfo
+		return slog.LevelInfo, nil
 	case "notice":
-		return LevelNotice
+		return LevelNotice, nil
 	case "warn", "warning":
-		return slog.LevelWarn
+		return slog.LevelWarn, nil
 	case "error":
-		return slog.LevelError
+		return slog.LevelError, nil
 	case "audit":
-		return LevelAudit
+		return LevelAudit, nil
 	default:
-		return slog.LevelInfo
+		return slog.LevelInfo, fmt.Errorf("logger: unknown level %q", s)
 	}
+}
+
+// parseLevelString keeps the lenient LOG_LEVEL behavior: unknown names fall back to Info.
+func parseLevelString(s string) slog.Level {
+	level, _ := ParseLevel(s)
+	return level
 }
 
 func parseBoolEnv(s string) bool {
