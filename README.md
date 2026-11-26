@@ -21,7 +21,7 @@ A beautiful, high-performance logger for Go with colorized output, structured lo
 - ⚡ **Async Logging** — Non-blocking log writes for high-throughput applications
 - 🔢 **Atomic metrics counters** — `DefaultMetricsCollector` uses `atomic.Int64`, mutex only for map fields
 - 🎲 **Log Sampling** — Reduce log volume by deterministically sampling based on message content
-- 🔇 **Log Deduplication** — Suppress repeated messages within a configurable time window
+- 🔇 **Log Deduplication** — Collapse exact repeats (same level, message and fields) within a configurable time window; audit lines are never suppressed
 - 🔄 **Log Rotation** — Automatic log file rotation based on size or age
 - 📈 **Metrics** — Built-in log metrics collection and Prometheus text exposition endpoint
 - 💓 **Health Check** — `HealthCheck()` verifies output writer, buffer usage, and audit state
@@ -628,7 +628,7 @@ server := grpc.NewServer(
 
 ### Log Deduplication
 
-Suppress repeated identical messages and emit a summary when the window expires:
+Suppress exact repeats and emit a summary when the window expires. A line is a repeat only when its level, message **and every key-value** match a line already written in the window, so lines that differ in any field are all written. Audit lines (`LogAudit`, legacy `LogAuditEvent`) are never suppressed. The summary keeps the first line's level and message but prints no fields:
 
 ```go
 logger.SetConfig(logger.Config{
@@ -639,9 +639,13 @@ logger.SetConfig(logger.Config{
 
 // Only the first message is logged immediately
 for i := 0; i < 100; i++ {
-    logger.LogWarn("Connection retry failed")
+    logger.LogWarn("Connection retry failed", "host", "db-1")
 }
 // After 10s: "Connection retry failed (repeated 99 more times)"
+
+// Different fields are different lines — both are written
+logger.LogInfo("Email sent", "to", "alice@example.com")
+logger.LogInfo("Email sent", "to", "bob@example.com")
 ```
 
 ### Health Check
@@ -915,7 +919,7 @@ Like `Slog()`, this path skips sampling and deduplication. Deduplication would n
 
 Reduce log volume by sampling roughly a percentage of your distinct log messages. Useful for high-traffic applications where you need to cut volume without losing observability.
 
-> **Note:** Sampling is **deterministic and keyed on the message string** (hashed with `SampleSeed`), not decided randomly per call. A given message text is therefore _always_ kept or _always_ dropped for a fixed rate/seed. Vary the message text (not just the key-value fields) to sample across a population of events.
+> **Note:** Sampling is **deterministic and keyed on the message string** (hashed with `SampleSeed`), not decided randomly per call. A given message text is therefore _always_ kept or _always_ dropped for a fixed rate/seed. Vary the message text (not just the key-value fields) to sample across a population of events. Audit lines are never sampled.
 
 ```go
 logger.SetConfig(logger.Config{
@@ -1530,6 +1534,13 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
     middleware.WithRequestID(true),
 )
 ```
+
+### v4.5.0 Changes
+
+- **Fix: deduplication no longer drops audit records.** In v4.4.0, dedup keyed on the message text alone, and `LogAudit` always logs an empty message, so any two audit events inside `DedupWindow` collapsed into one, whatever their fields. Audit lines are now never deduplicated
+- **Deduplication matches whole lines** — A line counts as a repeat only when its level, message and every key-value match a line already written in the window. Lines that differ in any field are all written; exact repeats are still collapsed into one `"<msg> (repeated N more times)"` summary (first line's level, no fields)
+- **Sampling never drops audit lines** — `SampleRate` now applies to non-audit levels only
+- No API changes: `EnableDedup`, `DedupWindow`, `SampleRate` and `LogAudit` keep their names and types
 
 ### v4.4.0 Changes
 

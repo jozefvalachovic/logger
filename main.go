@@ -35,7 +35,7 @@ type Config struct {
 	MaxBodySize int64    // Maximum size for HTTP body logging in bytes (default: 1MB)
 	RedactPaths []string // URL paths to completely redact from logs
 
-	// Sampling configuration
+	// Sampling configuration (never applied to Audit lines)
 	SampleRate    float64 // 0.0 to 1.0, where 0.1 = log 10% of messages (default: 1.0 = all)
 	SampleRateSet bool    // Explicitly marks SampleRate as set (allows setting to 0.0)
 	SampleSeed    int64   // Seed for deterministic sampling
@@ -62,7 +62,9 @@ type Config struct {
 	CompactJSON  bool // Single-line JSON instead of indented
 	ColorizeJSON bool // Colorize JSON keys (requires EnableColor)
 
-	// Deduplication: suppress repeated identical messages within a window
+	// Deduplication: suppress exact repeats within a window. A line is a repeat
+	// only when its level, message and every key-value match; Audit lines are
+	// never suppressed.
 	EnableDedup bool
 	DedupWindow time.Duration // Default: 5s
 
@@ -195,15 +197,18 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 		return // Early return - don't process if we won't log anyway
 	}
 
-	// Apply sampling
-	if cfg.SampleRate < 1.0 && !shouldSample(message, cfg.SampleRate, cfg.SampleSeed) {
-		return
-	}
-
-	// Apply deduplication
-	if cfg.EnableDedup {
-		if dm := dedupMgr.Load(); dm != nil && !dm.ShouldLog(level, message) {
+	// Audit records are never sampled or deduplicated: every event is written in full.
+	if level != Audit {
+		// Apply sampling
+		if cfg.SampleRate < 1.0 && !shouldSample(message, cfg.SampleRate, cfg.SampleSeed) {
 			return
+		}
+
+		// Apply deduplication
+		if cfg.EnableDedup {
+			if dm := dedupMgr.Load(); dm != nil && !dm.ShouldLog(level, message, keyValues) {
+				return
+			}
 		}
 	}
 
