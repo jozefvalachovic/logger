@@ -1,0 +1,11 @@
+# Go build / test artifacts
+*.test
+*.out
+*.prof
+coverage.*
+
+# Logs written by examples and tests
+*.log
+
+# Claude Code personal overrides
+.claude/settings.local.json
