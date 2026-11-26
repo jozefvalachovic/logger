@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -131,9 +132,9 @@ func (handler *prettyHandler) Handle(ctx context.Context, record slog.Record) er
 			parts = append(parts, jsonStr)
 		}
 	} else {
-		msg := record.Message
+		msg := escapeMessage(record.Message)
 		if handler.config.EnableColor {
-			msg = formatString(record.Message, cyan, false)
+			msg = formatString(msg, cyan, false)
 		}
 		parts = append(parts, msg)
 		if jsonStr != "" {
@@ -225,6 +226,18 @@ func mergeAttrsInto(dst map[string]any, attrs []slog.Attr) {
 
 		dst[a.Key] = value.Any()
 	}
+}
+
+// messageEscaper escapes CR, LF and ESC in messages. Fields are JSON-encoded
+// and already safe; the message is printed raw, so without this a message
+// could start a forged log line or inject terminal escape sequences.
+var messageEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`, "\x1b", `\x1b`)
+
+func escapeMessage(s string) string {
+	if !strings.ContainsAny(s, "\r\n\x1b") {
+		return s
+	}
+	return messageEscaper.Replace(s)
 }
 
 var jsonKeyColorRe = regexp.MustCompile(`("(?:[^"\\]|\\.)*")\s*:`)

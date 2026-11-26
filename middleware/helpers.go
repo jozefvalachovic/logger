@@ -1,11 +1,14 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -60,23 +63,84 @@ func (w *wrappedWriter) Flush() {
 	}
 }
 
-// Optional: ensure at compile time that wrappedWriter implements http.Flusher
-var _ http.Flusher = (*wrappedWriter)(nil)
+// Unwrap exposes the underlying writer to http.ResponseController, so
+// deadlines, full-duplex mode and other optional features keep working.
+func (w *wrappedWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
 
-// Pools for memory optimization
+// Hijack lets WebSocket and other upgrade handlers take over the connection.
+func (w *wrappedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.statusCode = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
+}
+
 var (
-	wrappedWriterPool = sync.Pool{
-		New: func() any {
-			return new(wrappedWriter{statusCode: http.StatusOK})
-		},
-	}
-
-	bufferPool = sync.Pool{
-		New: func() any {
-			return new(bytes.Buffer)
-		},
-	}
+	_ http.Flusher  = (*wrappedWriter)(nil)
+	_ http.Hijacker = (*wrappedWriter)(nil)
 )
+
+// bufferPool holds response-body capture buffers.
+var bufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+// captureReader records up to limit bytes of a request body as the handler
+// reads it, without changing what the handler sees.
+type captureReader struct {
+	io.ReadCloser
+	buf       bytes.Buffer
+	limit     int64
+	truncated bool  // more than limit bytes were seen
+	eof       bool  // the body was read to the end
+	closed    bool  // the handler (or server) closed the body
+	err       error // first read error other than io.EOF
+}
+
+func (c *captureReader) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	if n > 0 {
+		room := c.limit - int64(c.buf.Len())
+		if int64(n) > room {
+			c.truncated = true
+		}
+		if room > 0 {
+			c.buf.Write(p[:min(int64(n), room)])
+		}
+	}
+	switch {
+	case err == io.EOF:
+		c.eof = true
+	case err != nil && c.err == nil:
+		c.err = err
+	}
+	return n, err
+}
+
+func (c *captureReader) Close() error {
+	c.closed = true
+	return c.ReadCloser.Close()
+}
+
+// finish reads whatever the handler left unread, up to the capture limit, so
+// the body can still be logged, then returns what was captured. It is only
+// called after the handler returned, when the body is about to be logged.
+func (c *captureReader) finish() (body []byte, err error, truncated bool) {
+	if c == nil {
+		return nil, nil, false
+	}
+	if !c.eof && !c.closed && !c.truncated && c.err == nil {
+		// One byte past the limit tells a body of exactly limit bytes apart
+		// from a longer one.
+		_, _ = io.CopyN(io.Discard, c, c.limit-int64(c.buf.Len())+1)
+	}
+	return c.buf.Bytes(), c.err, c.truncated
+}
 
 // shouldLogBody checks if the content type is appropriate for logging
 func shouldLogBody(contentType string) bool {

@@ -123,13 +123,6 @@ var (
 	// (e.g. comparing old vs new async/audit config) are safe.
 	configWriteMu sync.Mutex
 
-	// Async logging
-	logChan      chan *logEntry
-	asyncDone    chan bool
-	asyncRunning bool
-	asyncMu      sync.Mutex
-	asyncWg      sync.WaitGroup // Tracks if async goroutine is running
-
 	// Metrics (nil when EnableMetrics is false). Accessed atomically so the
 	// log path can read it without holding configWriteMu.
 	metrics atomic.Pointer[LogMetrics]
@@ -227,22 +220,17 @@ func logInternal(level LogLevel, message string, keyValues ...any) {
 		pc = pcs[0]
 	}
 
-	// Use async logging if enabled
-	if cfg.AsyncMode && asyncRunning {
-		entry := &logEntry{
+	// Use async logging if enabled. A full queue, or a worker that is
+	// stopping, falls back to a synchronous write so no line is lost.
+	if cfg.AsyncMode {
+		if w := asyncW.Load(); w != nil && w.enqueue(&logEntry{
 			level:     level,
 			message:   message,
 			keyValues: keyValues,
 			pc:        pc,
+		}) {
+			return
 		}
-		select {
-		case logChan <- entry:
-			// Successfully queued
-		default:
-			// Channel full, fall back to sync logging
-			logInternalSync(level, message, pc, keyValues...)
-		}
-		return
 	}
 
 	// Synchronous logging

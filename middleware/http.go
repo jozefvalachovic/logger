@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
@@ -64,28 +63,23 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 			options.OnRequestStart(r)
 		}
 
-		// Read and buffer the body for potential logging
-		var bodyBytes []byte
-		var bodyErr error
-		truncated := false
+		// Record the request body as the handler reads it, up to MaxBodySize.
+		// The handler always receives the full, untruncated body.
+		var capture *captureReader
 		shouldCapture := options.LogBodyOnErrors || (options.BodySampleRate > 0 && rand.Float64() < options.BodySampleRate)
-		if r.Body != nil && shouldCapture {
-			bodyBytes, bodyErr = io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize+1))
-			_ = r.Body.Close()
-			if int64(len(bodyBytes)) > cfg.MaxBodySize {
-				truncated = true
-				bodyBytes = bodyBytes[:cfg.MaxBodySize]
-			}
-			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		if r.Body != nil && r.Body != http.NoBody && shouldCapture {
+			capture = &captureReader{ReadCloser: r.Body, limit: cfg.MaxBodySize}
+			r.Body = capture
 		}
 
-		// Get a wrapped writer from pool
-		wrapped := wrappedWriterPool.Get().(*wrappedWriter)
-		wrapped.ResponseWriter = w
-		wrapped.statusCode = http.StatusOK
-		wrapped.captureBody = options.LogResponseBody
-		wrapped.maxCaptureBytes = cfg.MaxBodySize
-		wrapped.capturedBytes = 0
+		// Not pooled: a handler that keeps the writer after returning must
+		// never be able to write into another request's response.
+		wrapped := &wrappedWriter{
+			ResponseWriter:  w,
+			statusCode:      http.StatusOK,
+			captureBody:     options.LogResponseBody,
+			maxCaptureBytes: cfg.MaxBodySize,
+		}
 		if options.LogResponseBody {
 			wrapped.responseBody = bufferPool.Get().(*bytes.Buffer)
 			wrapped.responseBody.Reset()
@@ -183,9 +177,11 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 
 		switch logLevel {
 		case logger.Error:
+			bodyBytes, bodyErr, truncated := capture.finish()
 			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
 			logger.LogError(logMsg, keyValues...)
 		case logger.Warn:
+			bodyBytes, bodyErr, truncated := capture.finish()
 			logErrorDetails(r, wrapped, options, bodyBytes, bodyErr, truncated, fullPath, requestID, cfg)
 			logger.LogWarn(logMsg, keyValues...)
 		case logger.Debug:
@@ -194,13 +190,13 @@ func logHTTPMiddlewareWithOptions(next http.Handler, options *HTTPMiddlewareOpti
 			logger.LogInfo(logMsg, keyValues...)
 		}
 
-		// Return pooled objects
-		if wrapped.responseBody != nil {
-			wrapped.responseBody.Reset()
-			bufferPool.Put(wrapped.responseBody)
+		// Detach the response buffer before returning it to the pool, so a
+		// late write from the handler cannot reach the next request's buffer.
+		if buf := wrapped.responseBody; buf != nil {
+			wrapped.captureBody = false
 			wrapped.responseBody = nil
+			buf.Reset()
+			bufferPool.Put(buf)
 		}
-		wrapped.captureBody = false
-		wrappedWriterPool.Put(wrapped)
 	})
 }

@@ -14,11 +14,9 @@ func HealthCheck() error {
 		errs = append(errs, fmt.Errorf("health: output writer is nil"))
 	}
 
-	if cfg.AsyncMode && asyncRunning {
-		asyncMu.Lock()
-		chanLen := len(logChan)
-		chanCap := cap(logChan)
-		asyncMu.Unlock()
+	if w := asyncW.Load(); cfg.AsyncMode && w != nil {
+		chanLen := len(w.ch)
+		chanCap := cap(w.ch)
 		if chanCap > 0 {
 			usage := float64(chanLen) / float64(chanCap)
 			if usage > 0.9 {

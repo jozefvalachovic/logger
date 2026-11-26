@@ -29,17 +29,32 @@ func (h *OTelBridgeHandler) Enabled(ctx context.Context, level slog.Level) bool 
 }
 
 func (h *OTelBridgeHandler) Handle(ctx context.Context, record slog.Record) error {
+	// Pick the severity from the original level: after mapLevel only Trace
+	// still matched, so Notice and Audit lost their severity attribute.
+	severity := customSeverity(record.Level)
+	// Clone before adding attrs so sibling handlers sharing the record's
+	// backing array never see ours.
+	record = record.Clone()
 	record.Level = h.mapLevel(record.Level)
 	record.AddAttrs(h.attrs...)
-	switch record.Level {
-	case LevelTrace:
-		record.AddAttrs(slog.String("severity", "TRACE"))
-	case LevelNotice:
-		record.AddAttrs(slog.String("severity", "NOTICE"))
-	case LevelAudit:
-		record.AddAttrs(slog.String("severity", "AUDIT"))
+	if severity != "" {
+		record.AddAttrs(slog.String("severity", severity))
 	}
 	return h.inner.Handle(ctx, record)
+}
+
+// customSeverity names the levels that have no slog equivalent.
+func customSeverity(level slog.Level) string {
+	switch level {
+	case LevelTrace:
+		return "TRACE"
+	case LevelNotice:
+		return "NOTICE"
+	case LevelAudit:
+		return "AUDIT"
+	default:
+		return ""
+	}
 }
 
 func (h *OTelBridgeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

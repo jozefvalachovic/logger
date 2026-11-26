@@ -1535,6 +1535,29 @@ loggedMux := middleware.LogHTTPMiddleware(mux,
 )
 ```
 
+### v4.5.1 Changes
+
+Bug fixes; no API changes.
+
+- **Fix: async mode could crash the process.** Stopping async mode (`SetConfig` or `Shutdown`) while lines were being logged could panic with `send on closed channel` or a nil dereference. Queued lines are now always written before the worker stops, and a line logged during shutdown is written synchronously
+- **Fix: request bodies were truncated for the handler.** With body capture on, `LogHTTPMiddleware` handed the handler only the first `MaxBodySize` bytes (1 MB by default); `LogHttpRequest` did the same. Handlers now always receive the full body; the middleware records the body as the handler reads it, and on an error response it still logs a body the handler did not read
+- **Fix: WebSocket upgrades failed behind the middleware.** `LogHTTPMiddleware` and `LogWebSocketMiddleware` now implement `http.Hijacker` and `Unwrap`, so upgrades and `http.ResponseController` features work. A hijacked request is logged with status `101`
+- **Fix: forged log lines.** CR, LF and ESC in a log message are escaped (`\n`, `\r`, `\x1b`), so a message (for example a request path) can no longer start a fake log line or inject terminal escape codes. Tabs and the logger's own colours are unchanged
+- **Fix: values that printed as `{}` or with extra quotes.** Output changes for these field values:
+
+  | Value | Before | Now |
+  |---|---|---|
+  | `error` | `{}` | `"boom"` (its message) |
+  | `time.Time` | `{}` | `"2026-01-02T03:04:05Z"` |
+  | `time.Duration` | `"1500000000"` | `"1.5s"` |
+  | named string (`type Status string`) | `"\"active\""` | `"active"` |
+  | named number (`type Priority int`) | `"3"` | `3` |
+  | type with `MarshalJSON` | its JSON, quoted again | its JSON |
+  | `int64` above 2^53 inside a struct | rounded | exact |
+
+- **Fix: `LogErrorWithStack(nil, …)` panicked.** It now logs `"error": "<nil>"`
+- **Fix: `OTelBridgeHandler` omitted `severity` for Notice and Audit,** and no longer modifies a record shared with sibling handlers
+
 ### v4.5.0 Changes
 
 - **Fix: deduplication no longer drops audit records.** In v4.4.0, dedup keyed on the message text alone, and `LogAudit` always logs an empty message, so any two audit events inside `DedupWindow` collapsed into one, whatever their fields. Audit lines are now never deduplicated

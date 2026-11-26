@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -90,6 +92,17 @@ func (w *wsWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Unwrap exposes the underlying writer to http.ResponseController.
+func (w *wsWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+// Hijack hands the connection to the WebSocket library. Without it, the
+// upgrade this middleware exists to log could never happen.
+func (w *wsWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

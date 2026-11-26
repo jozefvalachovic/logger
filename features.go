@@ -122,73 +122,66 @@ func shouldSample(msg string, rate float64, seed int64) bool {
 	return float64(hashValue%10000) < rate*10000
 }
 
-// startAsyncLogger starts the async logging goroutine
-func startAsyncLogger(cfg Config) {
-	asyncMu.Lock()
-
-	// If already running, stop it first to avoid race conditions
-	if asyncRunning {
-		// Signal stop and close channels
-		asyncDone <- true
-		close(logChan)
-		asyncRunning = false
-		asyncMu.Unlock()
-
-		// Wait for goroutine to finish
-		asyncWg.Wait()
-
-		asyncMu.Lock()
-	}
-
-	logChan = make(chan *logEntry, cfg.BufferSize)
-	asyncDone = make(chan bool, 1) // Buffered to prevent blocking
-	asyncRunning = true
-	asyncWg.Add(1)
-
-	asyncMu.Unlock()
-
-	go func() {
-		defer asyncWg.Done()
-		ticker := time.NewTicker(cfg.FlushTimeout)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case entry := <-logChan:
-				logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
-			case <-ticker.C:
-				// Flush any pending logs
-				for len(logChan) > 0 {
-					entry := <-logChan
-					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
-				}
-			case <-asyncDone:
-				// Drain remaining logs (channel is closed by stopAsyncLogger)
-				for entry := range logChan {
-					logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
-				}
-				return
-			}
-		}
-	}()
+// asyncWorker owns one async logging goroutine and its queue. Senders hold mu
+// for reading only while doing a non-blocking send; stop takes it for writing
+// before closing the queue, so no send can ever hit a closed channel.
+type asyncWorker struct {
+	mu     sync.RWMutex
+	closed bool
+	ch     chan *logEntry
+	done   chan struct{}
 }
 
-// stopAsyncLogger stops the async logging goroutine
-func stopAsyncLogger() {
-	asyncMu.Lock()
+// asyncW is the running worker, or nil when async mode is off.
+var asyncW atomic.Pointer[asyncWorker]
 
-	if !asyncRunning {
-		asyncMu.Unlock()
+// startAsyncLogger starts a new async worker, stopping (and draining) any
+// previous one first.
+func startAsyncLogger(cfg Config) {
+	stopAsyncLogger()
+	w := &asyncWorker{
+		ch:   make(chan *logEntry, cfg.BufferSize),
+		done: make(chan struct{}),
+	}
+	go func() {
+		defer close(w.done)
+		// Ranging over the queue writes every entry, including those still
+		// buffered when stop closes it, then exits.
+		for entry := range w.ch {
+			logInternalSync(entry.level, entry.message, entry.pc, entry.keyValues...)
+		}
+	}()
+	asyncW.Store(w)
+}
+
+// stopAsyncLogger stops the async worker, if any, after it has written every
+// queued entry.
+func stopAsyncLogger() {
+	w := asyncW.Swap(nil)
+	if w == nil {
 		return
 	}
+	w.mu.Lock()
+	w.closed = true
+	close(w.ch)
+	w.mu.Unlock()
+	<-w.done
+}
 
-	asyncDone <- true
-	close(logChan)
-	asyncRunning = false
-	asyncMu.Unlock()
-
-	// Wait for goroutine to finish
-	asyncWg.Wait()
+// enqueue queues an entry without blocking. It returns false when the worker
+// is stopping or its queue is full; the caller then logs synchronously.
+func (w *asyncWorker) enqueue(entry *logEntry) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return false
+	}
+	select {
+	case w.ch <- entry:
+		return true
+	default:
+		return false
+	}
 }
 
 // RotatingWriter wraps an io.Writer with rotation capabilities

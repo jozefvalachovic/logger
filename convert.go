@@ -1,11 +1,13 @@
 package logger
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // Helper functions to convert different integer types to int64
@@ -79,12 +81,19 @@ func bodyToKeyValues(key string, body []byte) []any {
 
 // handleStruct converts struct to JSON-like representation
 func handleStruct(key string, value any) slog.Attr {
-	// Try JSON marshaling first (respects json tags)
+	// Try JSON marshaling first (respects json tags and MarshalJSON)
 	if jsonData, err := json.Marshal(value); err == nil {
-		var result map[string]any
-		if json.Unmarshal(jsonData, &result) == nil {
-			return slog.Any(key, result)
+		if len(jsonData) > 0 && jsonData[0] == '{' {
+			// Decode with UseNumber so int64 values above 2^53 keep their precision.
+			dec := json.NewDecoder(bytes.NewReader(jsonData))
+			dec.UseNumber()
+			var result map[string]any
+			if dec.Decode(&result) == nil {
+				return slog.Any(key, result)
+			}
 		}
+		// A struct whose MarshalJSON yields a string, number or array.
+		return jsonAttr(key, jsonData)
 	}
 
 	// Fallback to reflection
@@ -151,10 +160,32 @@ func handleMap(key string, value any) slog.Attr {
 // marshalAsJSON fallback to JSON marshaling
 func marshalAsJSON(key string, value any) slog.Attr {
 	if jsonData, err := json.Marshal(value); err == nil {
-		return slog.String(key, string(jsonData))
+		return jsonAttr(key, jsonData)
 	}
 	// Final fallback
 	return slog.String(key, reflect.TypeOf(value).String())
+}
+
+// jsonAttr turns encoded JSON into an attr. A JSON string becomes a plain
+// string attr, so it prints once-quoted and pattern redaction still applies;
+// anything else (numbers, arrays, objects) is embedded verbatim.
+func jsonAttr(key string, data []byte) slog.Attr {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if json.Unmarshal(data, &s) == nil {
+			return slog.String(key, s)
+		}
+	}
+	return slog.Any(key, json.RawMessage(data))
+}
+
+// errorString returns err's message, or "<nil>" for a typed nil pointer.
+// fmt recovers from a panicking Error method.
+func errorString(err error) string {
+	if rv := reflect.ValueOf(err); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return "<nil>"
+	}
+	return fmt.Sprint(err)
 }
 
 // convertToSlogAttr converts any value to appropriate slog.Attr
@@ -172,6 +203,12 @@ func convertToSlogAttr(key string, value any) slog.Attr {
 		return slog.Bool(key, v)
 	case nil:
 		return slog.String(key, "<nil>")
+	case time.Time:
+		return slog.Time(key, v)
+	case time.Duration:
+		return slog.String(key, v.String())
+	case error:
+		return slog.String(key, errorString(v))
 	default:
 		// Handle complex types (structs, arrays, slices, maps)
 		return handleComplexType(key, v)

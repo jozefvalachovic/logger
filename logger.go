@@ -263,8 +263,12 @@ func LogErrorWithStack(err error, msg string, keyValues ...any) {
 }
 
 func logErrorWithStackInternal(err error, msg string, keyValues ...any) {
+	errText := "<nil>"
+	if err != nil {
+		errText = errorString(err)
+	}
 	kv := []any{
-		"error", err.Error(),
+		"error", errText,
 		"error_type", fmt.Sprintf("%T", err),
 	}
 	var chain []string
@@ -366,15 +370,13 @@ func SetConfig(cfg Config) {
 
 	// Handle async mode changes
 	configWriteMu.Lock()
-	oldCfg := globalConfig.Load()
-	oldAsync := oldCfg.AsyncMode
-	oldAuditConfig := oldCfg.Audit
+	oldAuditConfig := globalConfig.Load().Audit
 
-	if cfg.AsyncMode && !oldAsync {
-		// Starting async mode
+	if cfg.AsyncMode && asyncW.Load() == nil {
+		// Starting async mode (also after Shutdown stopped the worker)
 		startAsyncLogger(cfg)
-	} else if !cfg.AsyncMode && oldAsync {
-		// Stopping async mode
+	} else if !cfg.AsyncMode {
+		// Stopping async mode (no-op when it is not running)
 		stopAsyncLogger()
 	}
 
@@ -611,6 +613,12 @@ func LogHttpRequest(r *http.Request) {
 	logHttpRequestInternal(r)
 }
 
+// readCloser pairs a reader with the closer of the body it was built from.
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
 // logHttpRequestInternal is the internal implementation for logging HTTP requests
 func logHttpRequestInternal(r *http.Request) {
 	cfg := *globalConfig.Load()
@@ -639,12 +647,15 @@ func logHttpRequestInternal(r *http.Request) {
 
 	// Read and log the body if present
 	if r.Body != nil {
-		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodySize))
+		original := r.Body
+		bodyBytes, err := io.ReadAll(io.LimitReader(original, cfg.MaxBodySize))
+		// Hand the whole body back to later readers: the part read for
+		// logging, then the unread rest, closing the original body.
+		r.Body = readCloser{io.MultiReader(bytes.NewReader(bodyBytes), original), original}
 		if err != nil {
 			logInternal(Error, "Failed to read HTTP request body", "__error", err)
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		if len(bodyBytes) > 0 {
 			bodyKeyValues := bodyToKeyValues("body", bodyBytes)
 			keyValues = append(keyValues, bodyKeyValues...)
