@@ -43,7 +43,7 @@ jobs:
         run: go vet ./...
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v /example/)
+        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v /examples/)
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -67,7 +67,7 @@ jobs:
           go-version: "1.26"
 
       - name: Build
-        run: go build -v $(go list ./... | grep -v /example/)
+        run: go build -v $(go list ./... | grep -v /examples/)
 
   lint:
     name: Lint
@@ -136,25 +136,22 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Detected version: $TAG"
 
+      # Published tags are immutable: the Go module proxy and users' go.sum pin
+      # the first commit a tag pointed at, so an existing tag is never moved.
       - name: Check if tag already exists
         id: check
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG already exists — will replace."
+            echo "::notice::Tag $TAG already exists — skipping. Bump version.go to release."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Delete existing tag
-        if: steps.check.outputs.exists == 'true'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: git push origin ":refs/tags/$TAG"
-
       - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |

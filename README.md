@@ -1470,7 +1470,9 @@ cd examples/audit && go run main.go  # Enterprise audit features
 logger/
 ├── main.go           # Core configuration and types
 ├── logger.go         # Logging functions, With(), IfDebug(), etc.
-├── handler.go        # slog handler (redaction, caller, colorized JSON)
+├── handler.go        # Pretty slog handler (caller, colorized JSON)
+├── redact.go         # Redaction handler wrapping every output (keys + regex patterns)
+├── slog.go           # *slog.Logger interop: Slog(), StdLogger(), SetAsSlogDefault()
 ├── format.go         # Output formatting
 ├── convert.go        # Type conversion utilities
 ├── features.go       # Sampling, rotation, async, metrics, MetricsHandler

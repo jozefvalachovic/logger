@@ -1,0 +1,14 @@
+# golangci-lint v2 configuration. CI pins the binary version in .github/workflows/ci.yml;
+# this file pins the rule set so local runs on newer releases report the same issues.
+version: "2"
+
+run:
+  go: "1.26"
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+
+formatters:
+  enable:
+    - gofmt

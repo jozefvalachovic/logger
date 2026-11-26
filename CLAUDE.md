@@ -10,7 +10,9 @@ gofmt -l . && go vet ./... && go fix -diff ./... && golangci-lint run && go test
 ```
 
 CI pins Go 1.26 and golangci-lint v2.8.0 (config in `.golangci.yml`). Local tools are newer,
-so don't use APIs or language features newer than Go 1.26.
+so don't use APIs or language features newer than Go 1.26. To reproduce CI lint exactly
+(v2.8.0 can't read Go 1.27 export data, so it needs the older toolchain):
+`GOTOOLCHAIN=go1.26.0 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0 run`
 
 ## Architecture
 
